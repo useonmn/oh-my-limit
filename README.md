@@ -30,7 +30,8 @@ Git에는 개인 계정 정보나 인증 토큰을 저장하지 않습니다. �
 
 - macOS 14 이상
 - Swift 6 이상이 포함된 Xcode 또는 Command Line Tools
-- Codex 연결: ChatGPT 계정으로 로그인할 수 있는 공식 Codex CLI
+- Codex 직접 연결: ChatGPT 계정과 브라우저 (CLI 설치 불필요)
+- Codex 로컬 연결: 로그인된 공식 Codex CLI
 - Antigravity 직접 연결: Google 계정과 브라우저 (앱·CLI 설치 불필요)
 - Antigravity 로컬 연결: 로그인된 Antigravity 앱/IDE 또는 공식 `agy` CLI 1.1.11 이상
 
