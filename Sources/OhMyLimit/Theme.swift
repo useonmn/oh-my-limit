@@ -3,6 +3,9 @@ import SwiftUI
 
 enum Theme {
     static let width: CGFloat = 380
+    static func settingsHeight(accountCount: Int) -> CGFloat {
+        min(420, 280 + CGFloat(accountCount) * 35)
+    }
     static let panelInset: CGFloat = 20
     static let panelTitle = Font.system(size: 12, weight: .semibold)
     static let panelAccount = Font.system(size: 15, weight: .semibold)

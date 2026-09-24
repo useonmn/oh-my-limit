@@ -3,11 +3,13 @@ import Foundation
 public enum AccountProvider: String, Codable, Sendable {
     case codex
     case antigravity
+    case claude
 
     public var displayName: String {
         switch self {
         case .codex: "Codex"
         case .antigravity: "Antigravity"
+        case .claude: "Claude"
         }
     }
 }
@@ -107,14 +109,14 @@ public struct AccountStore: Sendable {
         return AccountProfile(id: id, name: name, homePath: home.path, isManaged: true)
     }
 
-    public func existingProfile(home: URL, name: String) throws -> AccountProfile {
+    public func existingProfile(home: URL, name: String, provider: AccountProvider = .codex) throws -> AccountProfile {
         let canonical = home.standardizedFileURL.resolvingSymlinksInPath()
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: canonical.path, isDirectory: &isDirectory),
               isDirectory.boolValue else {
             throw AccountStoreError.invalidHome
         }
-        return AccountProfile(name: name, homePath: canonical.path, isManaged: false)
+        return AccountProfile(name: name, homePath: canonical.path, isManaged: false, provider: provider)
     }
 
     private func validate(_ profiles: [AccountProfile]) throws {
@@ -130,7 +132,11 @@ public struct AccountStore: Sendable {
         guard profiles.filter({ $0.provider == .antigravity && $0.authentication == .local }).count <= 1 else {
             throw AccountStoreError.duplicateLocalProvider
         }
-        guard profiles.allSatisfy({ $0.authentication != .oauth || !$0.isManaged }) else {
+        guard profiles.filter({ $0.provider == .claude && $0.authentication == .local }).count <= 1 else {
+            throw AccountStoreError.duplicateLocalProvider
+        }
+        guard profiles.allSatisfy({ $0.provider != .claude || $0.authentication == .local }) &&
+              profiles.allSatisfy({ $0.authentication != .oauth || !$0.isManaged }) else {
             throw AccountStoreError.unreadableConfiguration
         }
         guard profiles.allSatisfy({ $0.homePath.hasPrefix("/") && !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
@@ -147,9 +153,9 @@ public enum AccountStoreError: Error, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .duplicateHome: "이미 연결한 Codex 폴더입니다."
-        case .duplicateLocalProvider: "Antigravity 로컬 계정은 이미 연결되어 있습니다."
-        case .invalidHome: "계정 이름과 Codex 폴더를 확인해 주세요."
+        case .duplicateHome: "이미 연결한 계정 폴더입니다."
+        case .duplicateLocalProvider: "이 서비스의 로컬 계정은 이미 연결되어 있습니다."
+        case .invalidHome: "계정 이름과 로컬 계정 폴더를 확인해 주세요."
         case .unreadableConfiguration: "계정 설정을 읽지 못했습니다. 기존 설정은 변경하지 않았습니다."
         }
     }

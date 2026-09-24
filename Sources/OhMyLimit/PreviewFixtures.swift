@@ -150,6 +150,17 @@ enum PreviewFixtures {
                 identity: antigravitySnapshot.identity, windows: antigravityWindows,
                 fetchedAt: now.addingTimeInterval(-900), source: .antigravityApp
             ), error: "로컬 사용량 서버에 연결하지 못했습니다. 마지막 확인값입니다.")]
+        case "claude":
+            states = [AccountState(profile: AccountProfile(
+                name: "Claude", homePath: "/preview/claude", isManaged: false, provider: .claude
+            ), snapshot: CodexUsageSnapshot(identity: CodexIdentity(planType: "max"), windows: [
+                CodexQuotaWindow(id: "claude.session", label: "5시간", usedPercent: 27,
+                    windowDurationMins: 300, resetsAt: now.addingTimeInterval(7_200)),
+                CodexQuotaWindow(id: "claude.weekly", label: "주간", usedPercent: 53,
+                    windowDurationMins: 10_080, resetsAt: now.addingTimeInterval(260_000)),
+                CodexQuotaWindow(id: "claude.model.Opus", label: "주간 · Opus", usedPercent: 75,
+                    windowDurationMins: 10_080, resetsAt: now.addingTimeInterval(260_000))
+            ], fetchedAt: now, source: .claudeCode))]
         case "mixed":
             states.append(AccountState(profile: antigravity, snapshot: antigravitySnapshot))
         case "error":

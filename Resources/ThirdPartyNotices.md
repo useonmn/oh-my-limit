@@ -1,6 +1,6 @@
 # Provider icons
 
-OpenAI and Antigravity vector marks are from LobeHub Icons:
+OpenAI, Claude, and Antigravity vector marks are from LobeHub Icons:
 https://github.com/lobehub/lobe-icons
 
 MIT License

@@ -170,6 +170,7 @@ enum AntigravityLocal {
         case .antigravityIDE: 2
         case .antigravityOAuth: 3
         case .codexOAuth: 4
+        case .claudeCode: 5
         }
     }
 

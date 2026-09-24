@@ -34,19 +34,17 @@ struct AccountCard: View {
                         Text(email).font(Theme.caption).foregroundStyle(Theme.panelSecondary)
                             .lineLimit(1).help(email)
                     } else {
-                        Text(state.profile.provider == .antigravity
-                             ? (state.profile.authentication == .oauth ? "Google 직접 로그인" : "Antigravity 로컬 계정")
-                             : (state.profile.authentication == .oauth ? "ChatGPT 직접 로그인"
-                                : state.profile.isManaged ? "별도 로그인 계정" : "기존 Codex 계정"))
+                        Text(accountDescription)
                             .font(Theme.caption).foregroundStyle(Theme.panelSecondary)
                     }
                 }
                 Spacer(minLength: Theme.compact)
                 Menu {
                     Button("새로고침", action: refresh).disabled(state.isRefreshing || state.isLoggingIn)
-                    Button(state.profile.provider == .antigravity && state.profile.authentication == .local
-                           ? "Antigravity 열기" : "다시 로그인",
-                           action: login).disabled(state.isLoggingIn)
+                    Button(state.profile.provider == .claude ? "Claude Code에서 로그인" :
+                           state.profile.provider == .antigravity && state.profile.authentication == .local
+                           ? "Antigravity 열기" : "다시 로그인", action: login)
+                        .disabled(state.isLoggingIn)
                     Divider()
                     Button("연결 해제", action: disconnect)
                 } label: {
@@ -105,9 +103,7 @@ struct AccountCard: View {
                             .buttonStyle(.borderless).controlSize(.small).foregroundStyle(Theme.mint)
                     }
                 } else {
-                    Button(state.profile.provider == .antigravity
-                           ? (state.profile.authentication == .oauth ? "Google 로그인" : "Antigravity 열기 / 설치")
-                           : (state.profile.authentication == .oauth ? "ChatGPT 로그인" : "Codex 로그인"), action: login)
+                    Button(loginLabel, action: login)
                         .buttonStyle(.borderless).controlSize(.small).foregroundStyle(Theme.mint)
                 }
             }
@@ -151,6 +147,23 @@ struct AccountCard: View {
         if minutes < 1_440 { return "\(minutes / 60)시간 전" }
         return "\(minutes / 1_440)일 전"
     }
+    private var accountDescription: String {
+        switch state.profile.provider {
+        case .claude: "Claude Code 로컬 계정"
+        case .antigravity: state.profile.authentication == .oauth ? "Google 직접 로그인" : "Antigravity 로컬 계정"
+        case .codex: state.profile.authentication == .oauth ? "ChatGPT 직접 로그인"
+            : state.profile.isManaged ? "별도 로그인 계정" : "기존 Codex 계정"
+        }
+    }
+
+    private var loginLabel: String {
+        switch state.profile.provider {
+        case .claude: "Claude Code에서 로그인"
+        case .antigravity: state.profile.authentication == .oauth ? "Google 로그인" : "Antigravity 열기 / 설치"
+        case .codex: state.profile.authentication == .oauth ? "ChatGPT 로그인" : "Codex 로그인"
+        }
+    }
+
 }
 
 struct PopoverActions {
@@ -246,7 +259,7 @@ struct PopoverView: View {
                 .buttonStyle(.borderless)
                 .keyboardShortcut("r")
                 .disabled(accounts.contains { $0.isRefreshing || $0.isLoggingIn }
-                          || (!hasCLI && accounts.allSatisfy { $0.profile.provider == .codex }))
+                          || (!hasCLI && accounts.allSatisfy { $0.profile.provider == .codex && $0.profile.authentication == .local }))
                 .help("새로고침 (⌘R)")
                 .accessibilityLabel("모든 계정 새로고침")
             }
@@ -347,7 +360,7 @@ struct PopoverView: View {
             if accounts.isEmpty {
                 emptyState
             } else {
-                if !hasCLI && selectedAccount?.profile.provider == .codex {
+                if !hasCLI && selectedAccount?.profile.provider == .codex && selectedAccount?.profile.authentication == .local {
                     VStack(alignment: .leading, spacing: Theme.small) {
                         Label("Codex CLI를 찾을 수 없습니다", systemImage: "terminal")
                             .font(Theme.panelAccount)
@@ -393,7 +406,7 @@ struct PopoverView: View {
 
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: Theme.gap) {
-            Text("Codex 또는 Antigravity를 연결해\n사용량과 초기화 시간을 확인하세요.")
+            Text("Codex, Claude 또는 Antigravity를 연결해\n사용량과 초기화 시간을 확인하세요.")
                 .font(Theme.panelBody).foregroundStyle(Theme.panelSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: Theme.small) {

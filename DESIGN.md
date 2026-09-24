@@ -89,7 +89,8 @@ Reset countdowns stay concise; complete local dates appear in tooltips.
 Measure the actual SwiftUI content, including errors and notices, and cap the
 height at 620 pt. Account selection and data changes must update native popover
 sizing after published state commits. Keep `height(for:)` compatible by adding
-an optional selected ID. Settings remain 480 pt wide.
+an optional selected ID. Settings use the 380 pt panel width and a compact
+account-count-dependent height capped at 420 pt; excess content scrolls.
 Buttons remain real keyboard-reachable SwiftUI controls; the primary action
 uses `.borderedProminent` with the system focus ring.
 Native content-stress checks cover empty, two accounts, long labels, missing
@@ -120,13 +121,15 @@ windows, stale data, login waiting, and errors in both appearances.
   "항상 허용" choice without promising access after Keychain resets or locks.
 - `EmptyState`: brief explanation and real existing-account/login actions. Missing
   CLI replaces the connection action with setup, rather than stacking disabled controls.
-- `SettingsView`: executable selection and account-add actions. Local directory
-  selection does not copy or expose credentials.
-  Antigravity's primary action is Google login without an app or CLI installation.
-  A secondary local-account connection and app-open action remain available.
-  Direct accounts are independent; only the local account follows external login.
-  CLI reports without an email say so and
-  never inherit the previous local snapshot's identity.
+- `SettingsView`: show a compact connected-account list followed by one
+  provider's connection actions, chosen with a segmented control. Do not stack
+  every service's setup instructions in the same viewport. Direct login is
+  primary for Codex and Antigravity; secondary CLI/local actions are disclosed.
+  Claude shows its two-step external login only while disconnected. Each
+  account retains alias, refresh, reconnect, cancel and disconnect actions.
+  Local directory selection does not copy credentials. Direct accounts are
+  independent; only local accounts follow external login. CLI reports without
+  an email never inherit the previous local identity.
 - `Header`: small app title, visibly labeled preview data when applicable, connected
   "사용률" context so percentages are not mistaken for remaining allowance,
   refresh/add controls, and a settings menu containing settings and quit. Refresh

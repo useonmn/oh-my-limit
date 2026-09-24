@@ -18,7 +18,7 @@ public struct AccountState: Identifiable, Sendable {
 
     public func isStale(at now: Date) -> Bool {
         guard let snapshot else { return false }
-        let threshold: TimeInterval = profile.provider == .antigravity ? 660 : 150
+        let threshold: TimeInterval = profile.provider == .codex ? 150 : 660
         return error != nil || now.timeIntervalSince(snapshot.fetchedAt) > threshold
     }
 
@@ -31,6 +31,9 @@ public struct AccountState: Identifiable, Sendable {
             return main.first(where: { $0.windowDurationMins == 10_080 }) ?? main.first
         case .antigravity:
             return (weekly.isEmpty ? known : weekly).max { $0.usedPercent < $1.usedPercent }
+        case .claude:
+            return known.first(where: { $0.id == "claude.weekly" })
+                ?? known.first(where: { $0.id == "claude.session" })
         }
     }
 }
@@ -40,6 +43,7 @@ public final class UsageMonitor: ObservableObject {
     public typealias Fetch = @Sendable (URL, URL) async throws -> CodexUsageSnapshot
     public typealias Login = @Sendable (URL, URL, @escaping @Sendable (URL) -> Void) async throws -> CodexIdentity
     public typealias AntigravityFetch = @Sendable () async throws -> CodexUsageSnapshot
+    public typealias ClaudeFetch = @Sendable (URL, Bool) async throws -> CodexUsageSnapshot
 
     @Published public private(set) var accounts: [AccountState] = []
     @Published public private(set) var notice: String?
@@ -52,6 +56,7 @@ public final class UsageMonitor: ObservableObject {
     private let fetchAntigravity: AntigravityFetch
     private let directAntigravity: AntigravityDirectClient
     private let directCodex: CodexDirectClient
+    private let fetchClaude: ClaudeFetch
     private let clock: @Sendable () -> Date
     private var operations: [UUID: Task<Void, Never>] = [:]
     private var draining: [UUID: (id: UUID, task: Task<Void, Never>)] = [:]
@@ -80,6 +85,7 @@ public final class UsageMonitor: ObservableObject {
         fetchAntigravity: @escaping AntigravityFetch = {
             try await AntigravityClient().fetchUsage()
         },
+        fetchClaude: @escaping ClaudeFetch = { try await ClaudeClient().fetchUsage(home: $0, allowKeychainInteraction: $1) },
         directAntigravity: AntigravityDirectClient = AntigravityDirectClient(),
         directCodex: CodexDirectClient = CodexDirectClient(),
         clock: @escaping @Sendable () -> Date = { Date() }
@@ -91,6 +97,7 @@ public final class UsageMonitor: ObservableObject {
         self.fetchAntigravity = fetchAntigravity
         self.directAntigravity = directAntigravity
         self.directCodex = directCodex
+        self.fetchClaude = fetchClaude
         self.clock = clock
         do {
             accounts = try store.load().map { profile in
@@ -158,6 +165,21 @@ public final class UsageMonitor: ObservableObject {
                 name: "Antigravity", homePath: FileManager.default.homeDirectoryForCurrentUser.path,
                 isManaged: false, provider: .antigravity
             )
+            try store.save(accounts.map(\.profile) + [profile])
+            accounts.append(AccountState(profile: profile))
+            return profile.id
+        } catch {
+            notice = error.localizedDescription
+            return nil
+        }
+    }
+
+    @discardableResult
+    public func connectClaude(home: URL) -> UUID? {
+        guard configurationReadable, !isShuttingDown else { return nil }
+        if let existing = accounts.first(where: { $0.profile.provider == .claude }) { return existing.id }
+        do {
+            let profile = try store.existingProfile(home: home, name: "Claude", provider: .claude)
             try store.save(accounts.map(\.profile) + [profile])
             accounts.append(AccountState(profile: profile))
             return profile.id
@@ -249,6 +271,8 @@ public final class UsageMonitor: ObservableObject {
                         try await directAntigravity.disconnect(profileID: id)
                     case .codex:
                         try await directCodex.disconnect(profileID: id)
+                    case .claude:
+                        break // Claude accounts only reference Claude Code's local login.
                     }
                     guard let self else { return }
                     try self.store.save(self.accounts.filter { $0.id != id }.map(\.profile))
@@ -340,7 +364,8 @@ public final class UsageMonitor: ObservableObject {
 
     @discardableResult
     public func authorizeKeychain(_ id: UUID) -> Task<Void, Never>? {
-        guard accounts.first(where: { $0.id == id })?.profile.authentication == .oauth else { return nil }
+        guard let profile = accounts.first(where: { $0.id == id })?.profile,
+              profile.authentication == .oauth || profile.provider == .claude else { return nil }
         return refresh(id, manual: true, allowKeychainInteraction: true)
     }
 
@@ -354,7 +379,7 @@ public final class UsageMonitor: ObservableObject {
               let state = accounts.first(where: { $0.id == id }) else { return nil }
         if !manual {
             if let retry = retryDates[id], clock() < retry { return nil }
-            let interval: TimeInterval = state.profile.provider == .antigravity ? 300 : 45
+            let interval: TimeInterval = state.profile.provider == .codex ? 45 : 300
             if let last = state.snapshot?.fetchedAt, state.error == nil,
                clock().timeIntervalSince(last) < interval { return nil }
         }
@@ -386,6 +411,10 @@ public final class UsageMonitor: ObservableObject {
             } else {
                 fetchUsage = fetchAntigravity
             }
+        case .claude:
+            fetchUsage = { [fetchClaude, home = state.profile.homeURL] in
+                try await fetchClaude(home, allowKeychainInteraction)
+            }
         }
         let pending = draining.values.filter { $0.id == id }.map(\.task)
         let generation = UUID()
@@ -412,6 +441,7 @@ public final class UsageMonitor: ObservableObject {
                     $0.error = error.localizedDescription
                     $0.needsKeychainAccess = (error as? CodexOAuthError)?.needsKeychainAccess == true
                         || (error as? AntigravityOAuthError)?.needsKeychainAccess == true
+                        || (error as? ClaudeClientError).map { if case .keychainUnavailable = $0 { true } else { false } } == true
                 }
                 let count = min((self.failures[id] ?? 0) + 1, 5)
                 self.failures[id] = count
@@ -428,6 +458,10 @@ public final class UsageMonitor: ObservableObject {
               let state = accounts.first(where: { $0.id == id }) else { return nil }
         if state.profile.provider == .antigravity && state.profile.authentication == .local {
             notice = "Antigravity 앱 또는 agy에서 로그인한 뒤 새로고침해 주세요."
+            return nil
+        }
+        if state.profile.provider == .claude {
+            notice = "Claude Code에서 로그인한 뒤 새로고침해 주세요."
             return nil
         }
         if accounts.first(where: { $0.id == id })?.isLoggingIn == true,
@@ -471,6 +505,8 @@ public final class UsageMonitor: ObservableObject {
                         identity = try await directAntigravity.login(profileID: id, onURL: onURL)
                     case .codex:
                         identity = try await directCodex.login(profileID: id, onURL: onURL)
+                    case .claude:
+                        return
                     }
                     guard !Task.isCancelled, let self, self.generations[id] == generation else { return }
                     profile.oauthIdentity = identity
@@ -485,6 +521,8 @@ public final class UsageMonitor: ObservableObject {
                         snapshot = try await directAntigravity.fetchUsage(profile: profile)
                     case .codex:
                         snapshot = try await directCodex.fetchUsage(profile: profile)
+                    case .claude:
+                        return
                     }
                 } else {
                     guard let executableURL else { return }

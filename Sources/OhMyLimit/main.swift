@@ -11,6 +11,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private let selection = AccountSelection()
     private let flow = PopoverFlow()
     private var previewWindow: NSWindow?
+    private var previewDirectory: URL?
     private var timer: Timer?
     private var subscription: AnyCancellable?
     private var outsideClickMonitor: Any?
@@ -65,7 +66,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
                     self.updateStatus(states)
                     self.setPanelContentSize(NSSize(
                         width: Theme.width,
-                        height: showingSettings ? 560 : PopoverView.height(
+                        height: showingSettings ? Theme.settingsHeight(accountCount: states.count) : PopoverView.height(
                             for: states, notice: monitor.notice, hasCLI: monitor.executableURL != nil,
                             selectedID: self.selection.selectedID
                         )
@@ -113,6 +114,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+        if let previewDirectory { try? FileManager.default.removeItem(at: previewDirectory) }
     }
 
     private var actions: PopoverActions {
@@ -247,6 +249,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private func login(_ id: UUID) {
         selection.select(id)
         if let profile = monitor?.accounts.first(where: { $0.id == id })?.profile,
+           profile.provider == .claude {
+            loginClaudeCode()
+            return
+        }
+        if let profile = monitor?.accounts.first(where: { $0.id == id })?.profile,
            profile.provider == .antigravity && profile.authentication == .local {
             openAntigravity()
             return
@@ -272,6 +279,49 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         if let path = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }),
            NSWorkspace.shared.open(URL(fileURLWithPath: path)) { return }
         NSWorkspace.shared.open(URL(string: "https://antigravity.google/download")!)
+    }
+
+    private func loginClaudeCode() {
+        guard let executable = ClaudeClient.findExecutable() else {
+            showClaudeLoginError(ClaudeClientError.cliMissing)
+            return
+        }
+        guard let monitor else { return }
+        do {
+            let config = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
+            let script = try ClaudeClient.prepareLoginCommand(
+                in: monitor.store.directory.appendingPathComponent("LoginCommands", isDirectory: true),
+                executableURL: executable, configDirectory: config
+            )
+            NSWorkspace.shared.open(
+                [script], withApplicationAt: URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"),
+                configuration: NSWorkspace.OpenConfiguration()
+            ) { [weak self] _, error in
+                guard let error else { return }
+                try? FileManager.default.removeItem(at: script)
+                Task { @MainActor [weak self] in self?.showClaudeLoginError(error) }
+            }
+        } catch {
+            showClaudeLoginError(error)
+        }
+    }
+
+    private func showClaudeLoginError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Claude Code 로그인을 시작하지 못했습니다"
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
+    }
+
+    private func connectClaude() {
+        guard let monitor else { return }
+        let home = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true)
+        if let id = monitor.connectClaude(home: home) {
+            selection.select(id)
+            monitor.refresh(id)
+            flow.showingSettings = false
+        }
     }
 
     private func showSettings() {
@@ -302,7 +352,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
                 self.login(id)
                 self.flow.showingSettings = false
             },
+            connectClaude: { [weak self] in self?.connectClaude() },
+            loginClaude: { [weak self] in self?.loginClaudeCode() },
             renameAccount: { [weak self] id, name in self?.monitor?.rename(id, to: name) },
+            refreshAccount: { [weak self] id in self?.monitor?.refresh(id) },
+            loginAccount: { [weak self] id in self?.login(id) },
+            cancelLogin: { [weak self] id in self?.monitor?.cancel(id) },
+            authorizeKeychain: { [weak self] id in self?.monitor?.authorizeKeychain(id) },
             disconnectAccount: { [weak self] id in self?.monitor?.disconnect(id) }
         )
     }
@@ -344,16 +400,40 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
         }
         let content: AnyView
-        if scenario == "settings" {
-            let model = UsageMonitor(
-                store: AccountStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
-                executableURL: CodexClient.findExecutable()
-            )
-            content = AnyView(SettingsView(
+        if scenario == "settings" || scenario == "settings-connected" {
+            let store = AccountStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+            previewDirectory = store.directory
+            if scenario == "settings-connected" {
+                do {
+                    try store.save([
+                        AccountProfile(name: "개인", homePath: store.directory.path, isManaged: false,
+                                       authentication: .oauth, oauthIdentity: CodexIdentity(email: "personal@example.com")),
+                        AccountProfile(name: "업무", homePath: "/preview/codex", isManaged: false),
+                        AccountProfile(name: "Claude", homePath: "/preview/claude", isManaged: false, provider: .claude),
+                        AccountProfile(name: "Antigravity", homePath: store.directory.path, isManaged: false,
+                                       provider: .antigravity, authentication: .oauth,
+                                       oauthIdentity: CodexIdentity(email: "team@example.com"))
+                    ])
+                } catch {
+                    FileHandle.standardError.write(Data("Preview setup failed: \(error)\n".utf8))
+                    try? FileManager.default.removeItem(at: store.directory)
+                    exit(1)
+                }
+            }
+            let model = UsageMonitor(store: store, executableURL: CodexClient.findExecutable())
+            let settings = AnyView(SettingsView(
                 monitor: model, chooseExecutable: {}, connectCurrent: {}, chooseHome: { _ in }, addAccount: { _ in },
                 loginAntigravity: {}, connectAntigravity: {}, openAntigravity: {}, loginCodex: {},
-                renameAccount: { _, _ in }, disconnectAccount: { _ in }
-            ).frame(width: 480, height: 520).menuSurface())
+                connectClaude: {}, loginClaude: {},
+                renameAccount: { _, _ in }, refreshAccount: { _ in }, loginAccount: { _ in },
+                cancelLogin: { _ in }, authorizeKeychain: { _ in }, disconnectAccount: { _ in }
+            ))
+            let previewFlow = PopoverFlow()
+            previewFlow.showingSettings = true
+            content = AnyView(LivePopover(
+                monitor: model, selection: AccountSelection(), flow: previewFlow,
+                actions: PopoverActions(), settingsView: settings
+            ).frame(width: Theme.width, height: Theme.settingsHeight(accountCount: model.accounts.count)))
         } else {
             let accounts = PreviewFixtures.accounts(scenario)
             let index = argument("--selected-account").flatMap(Int.init) ?? 0
@@ -456,8 +536,10 @@ private final class PopoverPanel: NSPanel {
     override var canBecomeMain: Bool { true }
 }
 
-if CommandLine.arguments.contains("--probe") || CommandLine.arguments.contains("--probe-antigravity") {
+if CommandLine.arguments.contains("--probe") || CommandLine.arguments.contains("--probe-antigravity")
+    || CommandLine.arguments.contains("--probe-claude") {
     let antigravity = CommandLine.arguments.contains("--probe-antigravity")
+    let claude = CommandLine.arguments.contains("--probe-claude")
     Task { @MainActor in
         do {
             let snapshot: CodexUsageSnapshot
@@ -470,6 +552,10 @@ if CommandLine.arguments.contains("--probe") || CommandLine.arguments.contains("
                     executable = nil
                 }
                 snapshot = try await AntigravityClient(executableURL: executable).fetchUsage()
+            } else if claude {
+                let home = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
+                    ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true)
+                snapshot = try await ClaudeClient().fetchUsage(home: home)
             } else {
                 guard let executable = CodexClient.findExecutable() else { throw CocoaError(.executableNotLoadable) }
                 let home: URL
@@ -498,7 +584,8 @@ if CommandLine.arguments.contains("--probe") || CommandLine.arguments.contains("
             FileHandle.standardOutput.write(Data("\n".utf8))
             exit(0)
         } catch {
-            FileHandle.standardError.write(Data("\(antigravity ? "Antigravity" : "Codex"): \(error.localizedDescription)\n".utf8))
+            let provider = claude ? "Claude" : antigravity ? "Antigravity" : "Codex"
+            FileHandle.standardError.write(Data("\(provider): \(error.localizedDescription)\n".utf8))
             exit(1)
         }
     }
