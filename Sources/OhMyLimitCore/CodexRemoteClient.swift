@@ -1,7 +1,7 @@
 import Foundation
 
 /// Fetches Codex usage for a directly logged-in ChatGPT account from the
-/// backend API the CLI itself uses — no codex binary involved.
+/// ChatGPT backend usage API — no codex binary involved.
 public struct CodexRemoteClient: Sendable {
     public typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
 
@@ -25,7 +25,7 @@ public struct CodexRemoteClient: Sendable {
         request.setValue("Bearer \(credentials.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue(credentials.accountID, forHTTPHeaderField: "ChatGPT-Account-Id")
         request.setValue(CodexOAuthConfiguration.originator, forHTTPHeaderField: "originator")
-        request.setValue("codex-cli", forHTTPHeaderField: "User-Agent")
+        request.setValue(CodexOAuthConfiguration.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let data = try await send(request)
         return try CodexRemoteParser.usage(from: data, credentials: credentials)

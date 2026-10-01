@@ -3,7 +3,7 @@ import Testing
 @testable import OhMyLimitCore
 
 @Suite struct CodexOAuthClientTests {
-    @Test func authorizeURLMatchesCLIParameters() throws {
+    @Test func authorizeURLUsesBrowserLoginParameters() throws {
         let redirect = URL(string: "http://localhost:1455/auth/callback")!
         let url = try #require(CodexOAuthClient.authorizeURL(
             issuer: "https://auth.openai.com", clientID: "app_EMoamEEZ73f0CkXaXp7hrann",
@@ -18,10 +18,21 @@ import Testing
         #expect(query["code_challenge"] == "challenge+&%")
         #expect(query["code_challenge_method"] == "S256")
         #expect(query["state"] == "state+&%")
-        #expect(query["scope"] == "openid profile email offline_access api.connectors.read api.connectors.invoke")
+        #expect(query["scope"] == "openid profile email offline_access")
         #expect(query["id_token_add_organizations"] == "true")
         #expect(query["codex_cli_simplified_flow"] == "true")
-        #expect(query["originator"] == "codex_cli_rs")
+        #expect(query["originator"] == "oh-my-limit")
+    }
+
+    @Test func usageRequestIdentifiesThisApp() async throws {
+        let client = CodexRemoteClient(usageURL: "https://usage.invalid/wham/usage", transport: { request in
+            #expect(request.value(forHTTPHeaderField: "originator") == "oh-my-limit")
+            #expect(request.value(forHTTPHeaderField: "User-Agent")?.hasPrefix("OhMyLimit/") == true)
+            #expect(request.value(forHTTPHeaderField: "ChatGPT-Account-Id") == "acct-1")
+            return oauthResponse(request, body: #"{"rate_limit":{"primary_window":{"used_percent":5,"limit_window_seconds":18000}}}"#)
+        })
+        let snapshot = try await client.fetchUsage(codexCredentials())
+        #expect(snapshot.windows.map(\.id) == ["codex.primary"])
     }
 
     @Test func pkceChallengeMatchesRFC7636Vector() {

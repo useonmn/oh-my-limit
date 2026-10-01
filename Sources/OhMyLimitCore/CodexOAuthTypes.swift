@@ -1,13 +1,19 @@
 import Foundation
 import Security
 
-/// Public installed-app client configuration used by the Codex CLI ChatGPT login.
+/// Public installed-app client configuration for the ChatGPT browser login.
+/// The client ID and callback ports are the registered Codex values; the scope,
+/// originator, and User-Agent identify this app, matching OmO's direct login.
 /// These identify the OAuth client; user authorization tokens are stored only in Keychain.
 public enum CodexOAuthConfiguration {
     public static let issuer = "https://auth.openai.com"
     public static let clientID = "app_EMoamEEZ73f0CkXaXp7hrann"
-    public static let scope = "openid profile email offline_access api.connectors.read api.connectors.invoke"
-    public static let originator = "codex_cli_rs"
+    public static let scope = "openid profile email offline_access"
+    public static let originator = "oh-my-limit"
+    public static var userAgent: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        return "OhMyLimit/\(version ?? "dev")"
+    }
     /// Registered redirect URI allow-list for the Codex CLI client.
     public static let callbackPorts: [UInt16] = [1455, 1457]
     public static let callbackPath = "/auth/callback"
