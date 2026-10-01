@@ -180,7 +180,7 @@ private actor AuthorizationFetchGate {
         let store = AccountStore(directory: root)
         try store.save(profiles)
         monitor = UsageMonitor(
-            store: store, executableURL: nil,
+            store: store,
             directAntigravity: AntigravityDirectClient(
                 keychain: googleKeychain,
                 authenticate: { _ in

@@ -40,24 +40,17 @@ public struct AccountState: Identifiable, Sendable {
 
 @MainActor
 public final class UsageMonitor: ObservableObject {
-    public typealias Fetch = @Sendable (URL, URL) async throws -> CodexUsageSnapshot
-    public typealias Login = @Sendable (URL, URL, @escaping @Sendable (URL) -> Void) async throws -> CodexIdentity
     public typealias AntigravityFetch = @Sendable () async throws -> CodexUsageSnapshot
-    public typealias ClaudeFetch = @Sendable (URL, Bool) async throws -> CodexUsageSnapshot
 
     @Published public private(set) var accounts: [AccountState] = []
     @Published public private(set) var notice: String?
-    @Published public private(set) var executableURL: URL?
     @Published public private(set) var isShuttingDown = false
     public let store: AccountStore
 
-    private let fetch: Fetch
-    private let authenticate: Login
     private let fetchAntigravity: AntigravityFetch
     private let directAntigravity: AntigravityDirectClient
     private let directCodex: CodexDirectClient
     private let directClaude: ClaudeDirectClient
-    private let fetchClaude: ClaudeFetch
     private let clock: @Sendable () -> Date
     private var operations: [UUID: Task<Void, Never>] = [:]
     private var draining: [UUID: (id: UUID, task: Task<Void, Never>)] = [:]
@@ -76,34 +69,37 @@ public final class UsageMonitor: ObservableObject {
 
     public init(
         store: AccountStore,
-        executableURL: URL?,
-        fetch: @escaping Fetch = { executable, home in
-            try await CodexClient(executableURL: executable).fetchUsage(home: home)
-        },
-        authenticate: @escaping Login = { executable, home, onURL in
-            try await CodexClient(executableURL: executable).login(home: home, onURL: onURL)
-        },
         fetchAntigravity: @escaping AntigravityFetch = {
             try await AntigravityClient().fetchUsage()
         },
-        fetchClaude: @escaping ClaudeFetch = { try await ClaudeClient().fetchUsage(home: $0, allowKeychainInteraction: $1) },
         directAntigravity: AntigravityDirectClient = AntigravityDirectClient(),
         directCodex: CodexDirectClient = CodexDirectClient(),
         directClaude: ClaudeDirectClient = ClaudeDirectClient(),
         clock: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.store = store
-        self.executableURL = executableURL
-        self.fetch = fetch
-        self.authenticate = authenticate
         self.fetchAntigravity = fetchAntigravity
         self.directAntigravity = directAntigravity
         self.directCodex = directCodex
         self.directClaude = directClaude
-        self.fetchClaude = fetchClaude
         self.clock = clock
         do {
-            accounts = try store.load().map { profile in
+            let loaded = try store.load()
+            // Codex CLI and Claude Code connections are no longer supported. Their saved
+            // entries are dropped from the list only; CLI login files stay untouched.
+            let profiles = loaded.filter { $0.provider == .antigravity || $0.authentication == .oauth }
+            let retired = loaded.filter { $0.provider != .antigravity && $0.authentication != .oauth }
+            if !retired.isEmpty {
+                do {
+                    try store.save(profiles)
+                    for profile in retired { invalidateCache(profile.id) }
+                    notice = "Codex CLI·Claude Code로 연결했던 계정 \(retired.count)개는 더 이상 지원하지 않아 목록에서 제거했습니다. "
+                        + "설정에서 ChatGPT 또는 Claude 계정으로 다시 연결해 주세요."
+                } catch {
+                    notice = "이전 연결 방식의 계정을 정리하지 못했습니다. \(error.localizedDescription)"
+                }
+            }
+            accounts = profiles.map { profile in
                 var state = AccountState(profile: profile)
                 let file = store.directory.appendingPathComponent("snapshots/\(profile.id.uuidString).json")
                 if FileManager.default.fileExists(atPath: file.path) {
@@ -133,28 +129,6 @@ public final class UsageMonitor: ObservableObject {
 
     public func clearNotice() { notice = nil }
 
-    public func setExecutable(_ url: URL) {
-        guard FileManager.default.isExecutableFile(atPath: url.path) else {
-            notice = "실행 가능한 Codex 파일을 선택해 주세요."
-            return
-        }
-        executableURL = url
-    }
-
-    @discardableResult
-    public func connectExisting(home: URL, name: String) -> UUID? {
-        guard configurationReadable else { return nil }
-        do {
-            let profile = try store.existingProfile(home: home, name: normalizedName(name))
-            try store.save(accounts.map(\.profile) + [profile])
-            accounts.append(AccountState(profile: profile))
-            return profile.id
-        } catch {
-            notice = error.localizedDescription
-            return nil
-        }
-    }
-
     @discardableResult
     public func connectAntigravity() -> UUID? {
         guard configurationReadable else { return nil }
@@ -168,23 +142,6 @@ public final class UsageMonitor: ObservableObject {
                 name: "Antigravity", homePath: FileManager.default.homeDirectoryForCurrentUser.path,
                 isManaged: false, provider: .antigravity
             )
-            try store.save(accounts.map(\.profile) + [profile])
-            accounts.append(AccountState(profile: profile))
-            return profile.id
-        } catch {
-            notice = error.localizedDescription
-            return nil
-        }
-    }
-
-    @discardableResult
-    public func connectClaude(home: URL) -> UUID? {
-        guard configurationReadable, !isShuttingDown else { return nil }
-        if let existing = accounts.first(where: {
-            $0.profile.provider == .claude && $0.profile.authentication == .local
-        }) { return existing.id }
-        do {
-            let profile = try store.existingProfile(home: home, name: "Claude", provider: .claude)
             try store.save(accounts.map(\.profile) + [profile])
             accounts.append(AccountState(profile: profile))
             return profile.id
@@ -213,14 +170,13 @@ public final class UsageMonitor: ObservableObject {
         }
     }
 
-    /// Registers a Codex account that logs in through the app's own ChatGPT
-    /// OAuth flow instead of a codex CLI home directory.
+    /// Registers a Codex account that logs in through the app's own ChatGPT OAuth flow.
     @discardableResult
     public func createCodexAccount(name: String = "") -> UUID? {
         createOAuthAccount(provider: .codex, name: name)
     }
 
-    /// Registers a Claude account with the app's own claude.ai login, independent of Claude Code.
+    /// Registers a Claude account with the app's own claude.ai login.
     @discardableResult
     public func createClaudeAccount(name: String = "") -> UUID? {
         createOAuthAccount(provider: .claude, name: name)
@@ -235,24 +191,6 @@ public final class UsageMonitor: ObservableObject {
                 homePath: store.directory.path, isManaged: false,
                 provider: provider, authentication: .oauth
             )
-            try store.save(accounts.map(\.profile) + [profile])
-            accounts.append(AccountState(profile: profile))
-            return profile.id
-        } catch {
-            notice = error.localizedDescription
-            return nil
-        }
-    }
-
-    @discardableResult
-    public func createAccount(name: String) -> UUID? {
-        guard configurationReadable else { return nil }
-        guard executableURL != nil else {
-            notice = "Codex CLI를 찾지 못했습니다. 설정에서 실행 파일을 선택해 주세요."
-            return nil
-        }
-        do {
-            let profile = try store.createManagedProfile(name: normalizedName(name))
             try store.save(accounts.map(\.profile) + [profile])
             accounts.append(AccountState(profile: profile))
             return profile.id
@@ -380,7 +318,7 @@ public final class UsageMonitor: ObservableObject {
     @discardableResult
     public func authorizeKeychain(_ id: UUID) -> Task<Void, Never>? {
         guard let profile = accounts.first(where: { $0.id == id })?.profile,
-              profile.authentication == .oauth || profile.provider == .claude else { return nil }
+              profile.authentication == .oauth else { return nil }
         return refresh(id, manual: true, allowKeychainInteraction: true)
     }
 
@@ -401,20 +339,10 @@ public final class UsageMonitor: ObservableObject {
         let fetchUsage: AntigravityFetch
         switch state.profile.provider {
         case .codex:
-            if state.profile.authentication == .oauth {
-                fetchUsage = { [directCodex] in
-                    try await directCodex.fetchUsage(
-                        profile: state.profile, allowKeychainInteraction: allowKeychainInteraction
-                    )
-                }
-            } else {
-                guard let executableURL else {
-                    update(id) { $0.error = "Codex CLI를 찾지 못했습니다. 설정에서 실행 파일을 선택해 주세요." }
-                    return nil
-                }
-                fetchUsage = { [fetch, home = state.profile.homeURL] in
-                    try await fetch(executableURL, home)
-                }
+            fetchUsage = { [directCodex] in
+                try await directCodex.fetchUsage(
+                    profile: state.profile, allowKeychainInteraction: allowKeychainInteraction
+                )
             }
         case .antigravity:
             if state.profile.authentication == .oauth {
@@ -427,16 +355,10 @@ public final class UsageMonitor: ObservableObject {
                 fetchUsage = fetchAntigravity
             }
         case .claude:
-            if state.profile.authentication == .oauth {
-                fetchUsage = { [directClaude] in
-                    try await directClaude.fetchUsage(
-                        profile: state.profile, allowKeychainInteraction: allowKeychainInteraction
-                    )
-                }
-            } else {
-                fetchUsage = { [fetchClaude, home = state.profile.homeURL] in
-                    try await fetchClaude(home, allowKeychainInteraction)
-                }
+            fetchUsage = { [directClaude] in
+                try await directClaude.fetchUsage(
+                    profile: state.profile, allowKeychainInteraction: allowKeychainInteraction
+                )
             }
         }
         let pending = draining.values.filter { $0.id == id }.map(\.task)
@@ -465,7 +387,6 @@ public final class UsageMonitor: ObservableObject {
                     $0.needsKeychainAccess = (error as? CodexOAuthError)?.needsKeychainAccess == true
                         || (error as? AntigravityOAuthError)?.needsKeychainAccess == true
                         || (error as? ClaudeOAuthError)?.needsKeychainAccess == true
-                        || (error as? ClaudeClientError).map { if case .keychainUnavailable = $0 { true } else { false } } == true
                 }
                 let count = min((self.failures[id] ?? 0) + 1, 5)
                 self.failures[id] = count
@@ -484,29 +405,22 @@ public final class UsageMonitor: ObservableObject {
             notice = "Antigravity 앱 또는 agy에서 로그인한 뒤 새로고침해 주세요."
             return nil
         }
-        if state.profile.provider == .claude && state.profile.authentication == .local {
-            notice = "Claude Code에서 로그인한 뒤 새로고침해 주세요."
-            return nil
-        }
         if accounts.first(where: { $0.id == id })?.isLoggingIn == true,
            let pending = operations[id] {
             return pending
         }
-        guard !accounts.contains(where: \.isLoggingIn),
-              state.profile.authentication == .oauth || executableURL != nil else {
-            notice = "Codex 실행 파일을 확인하거나 진행 중인 로그인을 완료해 주세요."
+        guard !accounts.contains(where: \.isLoggingIn) else {
+            notice = "진행 중인 로그인을 완료해 주세요."
             return nil
         }
         cancel(id)
         let pending = draining.values.filter { $0.id == id }.map(\.task)
-        if state.profile.authentication == .oauth {
-            var profiles = accounts.map(\.profile)
-            guard let index = profiles.firstIndex(where: { $0.id == id }) else { return nil }
-            profiles[index].oauthIdentity = nil
-            do { try store.save(profiles) }
-            catch { notice = error.localizedDescription; return nil }
-            update(id) { $0.profile.oauthIdentity = nil }
-        }
+        var profiles = accounts.map(\.profile)
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else { return nil }
+        profiles[index].oauthIdentity = nil
+        do { try store.save(profiles) }
+        catch { notice = error.localizedDescription; return nil }
+        update(id) { $0.profile.oauthIdentity = nil }
         let generation = UUID()
         generations[id] = generation
         update(id) {
@@ -515,46 +429,39 @@ public final class UsageMonitor: ObservableObject {
             $0.snapshot = nil
         }
         invalidateCache(id)
-        let task = Task { [weak self, authenticate, fetch, directAntigravity, directCodex, directClaude, executableURL] in
+        let task = Task { [weak self, directAntigravity, directCodex, directClaude] in
             defer { self?.finish(id, generation: generation) }
             do {
                 for task in pending { await task.value }
                 try Task.checkCancellation()
                 let snapshot: CodexUsageSnapshot
                 var profile = state.profile
-                if profile.authentication == .oauth {
-                    let identity: CodexIdentity
-                    switch profile.provider {
-                    case .antigravity:
-                        identity = try await directAntigravity.login(profileID: id, onURL: onURL)
-                    case .codex:
-                        identity = try await directCodex.login(profileID: id, onURL: onURL)
-                    case .claude:
-                        identity = try await directClaude.login(profileID: id, onURL: onURL)
-                    }
-                    guard !Task.isCancelled, let self, self.generations[id] == generation else { return }
-                    profile.oauthIdentity = identity
-                    try self.store.save(self.accounts.map { $0.id == id ? profile : $0.profile })
-                    self.update(id) {
-                        $0.profile = profile
-                        $0.isLoggingIn = false
-                        $0.isRefreshing = true
-                    }
-                    switch profile.provider {
-                    case .antigravity:
-                        snapshot = try await directAntigravity.fetchUsage(profile: profile)
-                    case .codex:
-                        snapshot = try await directCodex.fetchUsage(profile: profile)
-                    case .claude:
-                        snapshot = try await directClaude.fetchUsage(profile: profile)
-                    }
-                } else {
-                    guard let executableURL else { return }
-                    _ = try await authenticate(executableURL, profile.homeURL, onURL)
-                    try Task.checkCancellation()
-                    snapshot = try await fetch(executableURL, profile.homeURL)
+                let identity: CodexIdentity
+                switch profile.provider {
+                case .antigravity:
+                    identity = try await directAntigravity.login(profileID: id, onURL: onURL)
+                case .codex:
+                    identity = try await directCodex.login(profileID: id, onURL: onURL)
+                case .claude:
+                    identity = try await directClaude.login(profileID: id, onURL: onURL)
                 }
                 guard !Task.isCancelled, let self, self.generations[id] == generation else { return }
+                profile.oauthIdentity = identity
+                try self.store.save(self.accounts.map { $0.id == id ? profile : $0.profile })
+                self.update(id) {
+                    $0.profile = profile
+                    $0.isLoggingIn = false
+                    $0.isRefreshing = true
+                }
+                switch profile.provider {
+                case .antigravity:
+                    snapshot = try await directAntigravity.fetchUsage(profile: profile)
+                case .codex:
+                    snapshot = try await directCodex.fetchUsage(profile: profile)
+                case .claude:
+                    snapshot = try await directClaude.fetchUsage(profile: profile)
+                }
+                guard !Task.isCancelled, self.generations[id] == generation else { return }
                 self.update(id) {
                     $0.snapshot = snapshot
                     $0.error = nil
@@ -575,11 +482,6 @@ public final class UsageMonitor: ObservableObject {
         }
         operations[id] = task
         return task
-    }
-
-    private func normalizedName(_ name: String) -> String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Codex \(accounts.count + 1)" : trimmed
     }
 
     private func update(_ id: UUID, _ body: (inout AccountState) -> Void) {

@@ -112,11 +112,9 @@ import Testing
         #expect(try keychain.load(profileID: profile.id)?.accessToken == "renewed-access")
     }
 
-    @Test @MainActor func directClaudeAccountCoexistsWithLocalAndSurvivesRestart() async throws {
+    @Test @MainActor func directClaudeAccountsStaySeparateAndSurviveRestart() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClaudeOAuth-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        let home = root.appendingPathComponent("home with spaces ; literal/.claude")
-        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         let keychain = ClaudeOAuthKeychain(service: "fixture.claude.monitor", security: OAuthFakeSecurity())
         let credentials = claudeCredentials()
         let usage = try ClaudeUsageParser.parse(
@@ -125,16 +123,11 @@ import Testing
         let direct = ClaudeDirectClient(keychain: keychain, authenticate: { _ in credentials },
                                         renew: { $0 }, fetch: { _ in usage })
         let monitor = UsageMonitor(
-            store: AccountStore(directory: root.appendingPathComponent("app")), executableURL: nil,
-            fetchClaude: { _, _ in
-                Issue.record("A direct Claude account must not read Claude Code's login")
-                throw ClaudeClientError.notLoggedIn
-            },
-            directClaude: direct
+            store: AccountStore(directory: root.appendingPathComponent("app")), directClaude: direct
         )
-        let local = try #require(monitor.connectClaude(home: home))
+        let other = try #require(monitor.createClaudeAccount(name: "Other"))
         let id = try #require(monitor.createClaudeAccount())
-        #expect(local != id)
+        #expect(other != id)
 
         await monitor.login(id, onURL: { _ in })?.value
 
@@ -144,12 +137,13 @@ import Testing
         #expect(state.snapshot == usage)
         #expect(state.menuWindow?.usedPercent == 41)
         #expect(try keychain.load(profileID: id) == credentials)
-        let restored = UsageMonitor(store: monitor.store, executableURL: nil, directClaude: direct)
-        #expect(restored.accounts.map(\.profile.authentication) == [.local, .oauth])
+        let restored = UsageMonitor(store: monitor.store, directClaude: direct)
+        #expect(restored.accounts.map(\.profile.authentication) == [.oauth, .oauth])
+        #expect(restored.accounts[0].snapshot == nil)
         #expect(restored.accounts[1].snapshot == usage)
 
         await monitor.disconnect(id)?.value
-        #expect(monitor.accounts.map(\.id) == [local])
+        #expect(monitor.accounts.map(\.id) == [other])
         #expect(try keychain.load(profileID: id) == nil)
     }
 }

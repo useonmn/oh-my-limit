@@ -41,9 +41,7 @@ struct AccountCard: View {
                 Spacer(minLength: Theme.compact)
                 Menu {
                     Button("새로고침", action: refresh).disabled(state.isRefreshing || state.isLoggingIn)
-                    Button(state.profile.provider == .claude && state.profile.authentication == .local
-                           ? "Claude Code에서 로그인" :
-                           state.profile.provider == .antigravity && state.profile.authentication == .local
+                    Button(state.profile.provider == .antigravity && state.profile.authentication == .local
                            ? "Antigravity 열기" : "다시 로그인", action: login)
                         .disabled(state.isLoggingIn)
                     Divider()
@@ -150,18 +148,17 @@ struct AccountCard: View {
     }
     private var accountDescription: String {
         switch state.profile.provider {
-        case .claude: state.profile.authentication == .oauth ? "Claude 직접 로그인" : "Claude Code 로컬 계정"
+        case .claude: "Claude 직접 로그인"
         case .antigravity: state.profile.authentication == .oauth ? "Google 직접 로그인" : "Antigravity 로컬 계정"
-        case .codex: state.profile.authentication == .oauth ? "ChatGPT 직접 로그인"
-            : state.profile.isManaged ? "별도 로그인 계정" : "기존 Codex 계정"
+        case .codex: "ChatGPT 직접 로그인"
         }
     }
 
     private var loginLabel: String {
         switch state.profile.provider {
-        case .claude: state.profile.authentication == .oauth ? "Claude 로그인" : "Claude Code에서 로그인"
+        case .claude: "Claude 로그인"
         case .antigravity: state.profile.authentication == .oauth ? "Google 로그인" : "Antigravity 열기 / 설치"
-        case .codex: state.profile.authentication == .oauth ? "ChatGPT 로그인" : "Codex 로그인"
+        case .codex: "ChatGPT 로그인"
         }
     }
 
@@ -171,7 +168,6 @@ struct PopoverActions {
     var selectAccount: (UUID) -> Void = { _ in }
     var refreshAll: () -> Void = {}
     var settings: () -> Void = {}
-    var connectCurrent: () -> Void = {}
     var addAccount: () -> Void = {}
     var quit: () -> Void = {}
     var dismissNotice: () -> Void = {}
@@ -195,7 +191,6 @@ struct PopoverView: View {
     private static let slotWidth = Theme.accountButtonWidth + Theme.compact
     let accounts: [AccountState]
     let notice: String?
-    let hasCLI: Bool
     let now: Date
     var preview = false
     var selectedID: UUID?
@@ -208,10 +203,10 @@ struct PopoverView: View {
 
     /// Measure the selected detail only; the header and account selector stay fixed.
     static func height(
-        for accounts: [AccountState], notice: String? = nil, hasCLI: Bool = true,
+        for accounts: [AccountState], notice: String? = nil,
         now: Date = .now, preview: Bool = false, selectedID: UUID? = nil
     ) -> CGFloat {
-        let view = PopoverView(accounts: accounts, notice: notice, hasCLI: hasCLI, now: now,
+        let view = PopoverView(accounts: accounts, notice: notice, now: now,
                                preview: preview, selectedID: selectedID)
         let host = NSHostingView(rootView: view.naturalLayout)
         return min(620, max(192, ceil(host.fittingSize.height)))
@@ -234,7 +229,7 @@ struct PopoverView: View {
             content(scrolling: true)
         }
         .frame(width: Theme.width, height: Self.height(
-            for: accounts, notice: notice, hasCLI: hasCLI, now: now, preview: preview,
+            for: accounts, notice: notice, now: now, preview: preview,
             selectedID: selectedID
         ))
         .foregroundStyle(Theme.panelPrimary)
@@ -259,8 +254,7 @@ struct PopoverView: View {
                 }
                 .buttonStyle(.borderless)
                 .keyboardShortcut("r")
-                .disabled(accounts.contains { $0.isRefreshing || $0.isLoggingIn }
-                          || (!hasCLI && accounts.allSatisfy { $0.profile.provider == .codex && $0.profile.authentication == .local }))
+                .disabled(accounts.contains { $0.isRefreshing || $0.isLoggingIn })
                 .help("새로고침 (⌘R)")
                 .accessibilityLabel("모든 계정 새로고침")
             }
@@ -361,15 +355,6 @@ struct PopoverView: View {
             if accounts.isEmpty {
                 emptyState
             } else {
-                if !hasCLI && selectedAccount?.profile.provider == .codex && selectedAccount?.profile.authentication == .local {
-                    VStack(alignment: .leading, spacing: Theme.small) {
-                        Label("Codex CLI를 찾을 수 없습니다", systemImage: "terminal")
-                            .font(Theme.panelAccount)
-                        Button("설정에서 실행 파일 선택…", action: actions.settings)
-                            .buttonStyle(.borderless).font(Theme.panelBody)
-                            .foregroundStyle(Theme.mint)
-                    }
-                }
                 if let state = selectedAccount {
                     Group {
                         if scrolling {
@@ -410,17 +395,9 @@ struct PopoverView: View {
             Text("Codex, Claude 또는 Antigravity를 연결해\n사용량과 초기화 시간을 확인하세요.")
                 .font(Theme.panelBody).foregroundStyle(Theme.panelSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            VStack(spacing: Theme.small) {
-                Button(hasCLI ? "현재 Codex 계정 연결" : "Codex 실행 파일 선택…",
-                       action: hasCLI ? actions.connectCurrent : actions.settings)
-                    .buttonStyle(.borderedProminent).controlSize(.large)
-                    .frame(maxWidth: .infinity)
-                Button("다른 서비스·계정 연결…", action: actions.addAccount)
-                    .buttonStyle(.borderless)
-                    .font(Theme.panelBody)
-                    .foregroundStyle(Theme.panelSecondary)
-                    .frame(maxWidth: .infinity, minHeight: 24)
-            }
+            Button("계정 연결…", action: actions.addAccount)
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .frame(maxWidth: .infinity)
         }
         .padding(.top, Theme.small)
     }
@@ -463,8 +440,7 @@ struct LivePopover: View {
                 .menuSurface()
             } else {
                 PopoverView(
-                    accounts: monitor.accounts, notice: monitor.notice,
-                    hasCLI: monitor.executableURL != nil, now: context.date,
+                    accounts: monitor.accounts, notice: monitor.notice, now: context.date,
                     selectedID: selection.selectedID, actions: actions
                 )
             }

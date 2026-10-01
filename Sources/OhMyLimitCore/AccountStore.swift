@@ -98,27 +98,6 @@ public struct AccountStore: Sendable {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
     }
 
-    public func createManagedProfile(name: String) throws -> AccountProfile {
-        let id = UUID()
-        let home = directory.appendingPathComponent("profiles", isDirectory: true)
-            .appendingPathComponent(id.uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: home, withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        return AccountProfile(id: id, name: name, homePath: home.path, isManaged: true)
-    }
-
-    public func existingProfile(home: URL, name: String, provider: AccountProvider = .codex) throws -> AccountProfile {
-        let canonical = home.standardizedFileURL.resolvingSymlinksInPath()
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: canonical.path, isDirectory: &isDirectory),
-              isDirectory.boolValue else {
-            throw AccountStoreError.invalidHome
-        }
-        return AccountProfile(name: name, homePath: canonical.path, isManaged: false, provider: provider)
-    }
-
     private func validate(_ profiles: [AccountProfile]) throws {
         let homes = profiles.map {
             $0.authentication == .oauth
@@ -130,9 +109,6 @@ public struct AccountStore: Sendable {
             throw AccountStoreError.duplicateHome
         }
         guard profiles.filter({ $0.provider == .antigravity && $0.authentication == .local }).count <= 1 else {
-            throw AccountStoreError.duplicateLocalProvider
-        }
-        guard profiles.filter({ $0.provider == .claude && $0.authentication == .local }).count <= 1 else {
             throw AccountStoreError.duplicateLocalProvider
         }
         guard profiles.allSatisfy({ $0.authentication != .oauth || !$0.isManaged }) else {

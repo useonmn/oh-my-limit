@@ -6,9 +6,15 @@ enum PreviewFixtures {
     static let now = Date(timeIntervalSince1970: 1_789_400_000)
 
     static func accounts(_ scenario: String) -> [AccountState] {
-        guard scenario != "empty" && scenario != "missing-cli" else { return [] }
-        let first = AccountProfile(name: "개인 계정", homePath: "/preview/personal", isManaged: true)
-        let second = AccountProfile(name: "업무 계정", homePath: "/preview/work", isManaged: true)
+        guard scenario != "empty" else { return [] }
+        let first = AccountProfile(
+            name: "개인 계정", homePath: "/preview/oauth", isManaged: false, authentication: .oauth,
+            oauthIdentity: CodexIdentity(email: "personal@example.com", accountID: "preview-personal")
+        )
+        let second = AccountProfile(
+            name: "업무 계정", homePath: "/preview/oauth", isManaged: false, authentication: .oauth,
+            oauthIdentity: CodexIdentity(email: "work@example.com", accountID: "preview-work")
+        )
         let personal = CodexUsageSnapshot(
             identity: CodexIdentity(email: "personal@example.com", planType: "plus"),
             windows: [
@@ -77,7 +83,7 @@ enum PreviewFixtures {
         case "ring-boundaries":
             states = [0.0, 2, 100, 125, 34].enumerated().map { index, percent in
                 let profile = AccountProfile(
-                    name: "테스트 계정", homePath: "/preview/boundary/\(index)", isManaged: true
+                    name: "테스트 계정", homePath: "/preview/oauth", isManaged: false, authentication: .oauth
                 )
                 return AccountState(profile: profile, snapshot: CodexUsageSnapshot(
                     identity: CodexIdentity(email: "account-\(index + 1)@example.com"),
@@ -150,17 +156,6 @@ enum PreviewFixtures {
                 identity: antigravitySnapshot.identity, windows: antigravityWindows,
                 fetchedAt: now.addingTimeInterval(-900), source: .antigravityApp
             ), error: "로컬 사용량 서버에 연결하지 못했습니다. 마지막 확인값입니다.")]
-        case "claude":
-            states = [AccountState(profile: AccountProfile(
-                name: "Claude", homePath: "/preview/claude", isManaged: false, provider: .claude
-            ), snapshot: CodexUsageSnapshot(identity: CodexIdentity(planType: "max"), windows: [
-                CodexQuotaWindow(id: "claude.session", label: "5시간", usedPercent: 27,
-                    windowDurationMins: 300, resetsAt: now.addingTimeInterval(7_200)),
-                CodexQuotaWindow(id: "claude.weekly", label: "주간", usedPercent: 53,
-                    windowDurationMins: 10_080, resetsAt: now.addingTimeInterval(260_000)),
-                CodexQuotaWindow(id: "claude.model.Opus", label: "주간 · Opus", usedPercent: 75,
-                    windowDurationMins: 10_080, resetsAt: now.addingTimeInterval(260_000))
-            ], fetchedAt: now, source: .claudeCode))]
         case "claude-oauth":
             let identity = CodexIdentity(email: "claude@example.com", accountID: "preview")
             states = [AccountState(profile: AccountProfile(

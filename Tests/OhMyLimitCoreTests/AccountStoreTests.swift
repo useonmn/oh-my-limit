@@ -68,45 +68,14 @@ struct AccountStoreTests {
         #expect(!FileManager.default.fileExists(atPath: root.path))
     }
 
-    @Test func managedAccountsUsePrivateDistinctDirectories() throws {
+    @Test func duplicateAccountIsRejectedWithoutOverwritingAccounts() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = AccountStore(directory: root)
-        let first = try store.createManagedProfile(name: "계정 1")
-        let second = try store.createManagedProfile(name: "계정 2")
-
-        #expect(first.homeURL != second.homeURL)
-        #expect(first.isManaged && second.isManaged)
-        #expect(first.homePath.hasPrefix(root.path))
-        let attributes = try FileManager.default.attributesOfItem(atPath: first.homePath)
-        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o700)
-    }
-
-    @Test func disconnectNeverDeletesExistingAuthentication() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let home = root.appendingPathComponent("existing")
-        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        let auth = home.appendingPathComponent("auth.json")
-        let credential = Data("test-credential-sentinel".utf8)
-        try credential.write(to: auth)
-        let store = AccountStore(directory: root.appendingPathComponent("app"))
-        let profile = try store.existingProfile(home: home, name: "기존 계정")
-        try store.save([profile])
-
-        try store.save([])
-
-        #expect(try Data(contentsOf: auth) == credential)
-        #expect(try store.load().isEmpty)
-    }
-
-    @Test func duplicateHomeIsRejectedWithoutOverwritingAccounts() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let store = AccountStore(directory: root)
-        let first = try store.createManagedProfile(name: "계정 1")
+        let first = AccountProfile(name: "계정 1", homePath: "/local/first", isManaged: false, provider: .antigravity)
         try store.save([first])
-        let duplicate = AccountProfile(name: "중복 계정", homePath: first.homePath, isManaged: true)
+        let duplicate = AccountProfile(id: first.id, name: "중복 계정", homePath: root.path, isManaged: false,
+                                       authentication: .oauth)
 
         #expect(throws: AccountStoreError.self) { try store.save([first, duplicate]) }
         #expect(try store.load() == [first])

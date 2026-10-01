@@ -7,29 +7,68 @@ import Testing
 struct UsageMonitorTests {
     private let now = Date(timeIntervalSince1970: 1_789_400_000)
 
-    private func snapshot(percent: Double = 34) -> CodexUsageSnapshot {
+    nonisolated private func snapshot(percent: Double = 34, identity: CodexIdentity = CodexIdentity(
+        email: "test@example.com", planType: "plus"
+    )) -> CodexUsageSnapshot {
         CodexUsageSnapshot(
-            identity: CodexIdentity(email: "test@example.com", planType: "plus"),
+            identity: identity,
             windows: [CodexQuotaWindow(
                 id: "codex.primary", label: "주간", usedPercent: percent,
                 windowDurationMins: 10_080, resetsAt: now.addingTimeInterval(3600)
-            )], fetchedAt: now
+            )], fetchedAt: now, source: .codexOAuth
         )
+    }
+
+    nonisolated private func credentials(_ index: Int) -> CodexOAuthCredentials {
+        CodexOAuthCredentials(accessToken: "fixture-access-\(index)", refreshToken: "fixture-refresh-\(index)",
+                              expiresAt: Date().addingTimeInterval(3600),
+                              accountID: "acct-\(index)", email: "account-\(index)@example.invalid")
+    }
+
+    private func codexAccounts(
+        _ names: [String], root: URL,
+        authenticate: @escaping @Sendable (@escaping @Sendable (URL) -> Void) async throws -> CodexOAuthCredentials = { _ in
+            Issue.record("Unexpected ChatGPT login")
+            throw CodexOAuthError.signInRequired
+        },
+        fetch: @escaping @Sendable (CodexOAuthCredentials) async throws -> CodexUsageSnapshot,
+        fetchAntigravity: @escaping UsageMonitor.AntigravityFetch = {
+            Issue.record("Unexpected Antigravity fetch")
+            throw AntigravityClientError.localUnavailable
+        },
+        clock: @escaping @Sendable () -> Date = { Date() }
+    ) throws -> (UsageMonitor, [AccountProfile]) {
+        let keychain = CodexOAuthKeychain(service: "fixture.codex.monitor", security: OAuthFakeSecurity())
+        let profiles = names.enumerated().map { index, name in
+            AccountProfile(name: name, homePath: root.path, isManaged: false, authentication: .oauth,
+                           oauthIdentity: credentials(index + 1).identity)
+        }
+        for (index, profile) in profiles.enumerated() {
+            try keychain.save(credentials(index + 1), profileID: profile.id)
+        }
+        let store = AccountStore(directory: root)
+        try store.save(profiles)
+        let monitor = UsageMonitor(
+            store: store, fetchAntigravity: fetchAntigravity,
+            directCodex: CodexDirectClient(keychain: keychain, authenticate: authenticate,
+                                           renew: { $0 }, fetch: fetch),
+            clock: clock
+        )
+        return (monitor, profiles)
     }
 
     @Test(arguments: [(100.0, 3.0), (42.0, 99.0)])
     func codexSummaryUsesMainWeeklyQuotaInsteadOfReserve(_ percentages: (Double, Double)) throws {
-        let data = Data("""
-        {"rateLimitsByLimitId":{
-          "base_model_inference":{"limitName":"gpt-reserve","primary":{"usedPercent":\(percentages.1),"windowDurationMins":10080}},
-          "codex":{"primary":{"usedPercent":\(percentages.0),"windowDurationMins":10080}},
-          "codex_bengalfox":{"secondary":{"usedPercent":0,"windowDurationMins":10080}}
-        }}
-        """.utf8)
-        let snapshot = try CodexResponseParser.usage(from: data, identity: CodexIdentity())
         let state = AccountState(
-            profile: AccountProfile(name: "Codex", homePath: "/fixture", isManaged: false),
-            snapshot: snapshot
+            profile: AccountProfile(name: "Codex", homePath: "/fixture", isManaged: false, authentication: .oauth),
+            snapshot: CodexUsageSnapshot(identity: CodexIdentity(), windows: [
+                CodexQuotaWindow(id: "base_model_inference.primary", label: "gpt-reserve",
+                    usedPercent: percentages.1, windowDurationMins: 10_080, resetsAt: nil),
+                CodexQuotaWindow(id: "codex.primary", label: "주간",
+                    usedPercent: percentages.0, windowDurationMins: 10_080, resetsAt: nil),
+                CodexQuotaWindow(id: "codex_bengalfox.secondary", label: "Spark",
+                    usedPercent: 0, windowDurationMins: 10_080, resetsAt: nil)
+            ])
         )
 
         #expect(state.menuWindow?.id == "codex.primary")
@@ -37,15 +76,14 @@ struct UsageMonitorTests {
     }
 
     @Test func codexSummaryPrefersMainShortWindowOverReserveWeekly() throws {
-        let data = Data(#"""
-        {"rateLimitsByLimitId":{
-          "base_model_inference":{"primary":{"usedPercent":3,"windowDurationMins":10080}},
-          "codex":{"primary":{"usedPercent":55,"windowDurationMins":300}}
-        }}
-        """#.utf8)
         let state = AccountState(
-            profile: AccountProfile(name: "Codex", homePath: "/fixture", isManaged: false),
-            snapshot: try CodexResponseParser.usage(from: data, identity: CodexIdentity())
+            profile: AccountProfile(name: "Codex", homePath: "/fixture", isManaged: false, authentication: .oauth),
+            snapshot: CodexUsageSnapshot(identity: CodexIdentity(), windows: [
+                CodexQuotaWindow(id: "base_model_inference.primary", label: "gpt-reserve",
+                    usedPercent: 3, windowDurationMins: 10_080, resetsAt: nil),
+                CodexQuotaWindow(id: "codex.primary", label: "5시간",
+                    usedPercent: 55, windowDurationMins: 300, resetsAt: nil)
+            ])
         )
 
         #expect(state.menuWindow?.id == "codex.primary")
@@ -54,7 +92,7 @@ struct UsageMonitorTests {
 
     @Test func codexSummaryDoesNotSubstituteReserveWhenMainQuotaIsUnavailable() {
         let state = AccountState(
-            profile: AccountProfile(name: "Codex", homePath: "/fixture", isManaged: false),
+            profile: AccountProfile(name: "Codex", homePath: "/fixture", isManaged: false, authentication: .oauth),
             snapshot: CodexUsageSnapshot(identity: CodexIdentity(), windows: [
                 CodexQuotaWindow(id: "base_model_inference.primary", label: "gpt-reserve",
                     usedPercent: 3, windowDurationMins: 10_080, resetsAt: nil),
@@ -68,25 +106,55 @@ struct UsageMonitorTests {
         #expect(state.menuWindow == nil)
     }
 
+    @Test func retiredCLIConnectionsAreDroppedOnLoadWithoutTouchingTheirFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("Retired-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let codexHome = root.appendingPathComponent("home with spaces ; literal/.codex")
+        try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+        let auth = codexHome.appendingPathComponent("auth.json")
+        let credential = Data("test-credential-sentinel".utf8)
+        try credential.write(to: auth)
+        let managed = UUID(), existing = UUID(), claudeCode = UUID()
+        let antigravity = UUID(), codexOAuth = UUID(), claudeOAuth = UUID()
+        let document = """
+        {"version":3,"accounts":[
+          {"id":"\(managed)","name":"Managed","homePath":"\(root.path)/profiles/\(managed)","isManaged":true},
+          {"id":"\(existing)","name":"Existing","homePath":"\(codexHome.path)","isManaged":false,"provider":"codex","authentication":"local"},
+          {"id":"\(claudeCode)","name":"Claude Code","homePath":"/Users/fixture/.claude","isManaged":false,"provider":"claude","authentication":"local"},
+          {"id":"\(antigravity)","name":"Antigravity","homePath":"/Users/fixture","isManaged":false,"provider":"antigravity","authentication":"local"},
+          {"id":"\(codexOAuth)","name":"ChatGPT","homePath":"\(root.path)","isManaged":false,"provider":"codex","authentication":"oauth"},
+          {"id":"\(claudeOAuth)","name":"Claude","homePath":"\(root.path)","isManaged":false,"provider":"claude","authentication":"oauth"}
+        ]}
+        """
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("snapshots"), withIntermediateDirectories: true)
+        try Data(document.utf8).write(to: root.appendingPathComponent("accounts.json"))
+        let retiredCache = root.appendingPathComponent("snapshots/\(existing.uuidString).json")
+        try Data("{}".utf8).write(to: retiredCache)
+        let store = AccountStore(directory: root)
+
+        let monitor = UsageMonitor(store: store)
+
+        #expect(monitor.accounts.map(\.id) == [antigravity, codexOAuth, claudeOAuth])
+        #expect(monitor.notice != nil)
+        #expect(try store.load().map(\.id) == [antigravity, codexOAuth, claudeOAuth])
+        #expect(!FileManager.default.fileExists(atPath: retiredCache.path))
+        #expect(try Data(contentsOf: auth) == credential)
+        #expect(monitor.createCodexAccount() != nil)
+        let reloaded = UsageMonitor(store: store)
+        #expect(reloaded.accounts.count == 4)
+        #expect(reloaded.notice == nil)
+    }
+
     @Test func antigravityLoginNeverStartsCodexAuthentication() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = AccountStore(directory: root)
-        let profile = AccountProfile(
-            name: "Antigravity", homePath: "/local/user", isManaged: false, provider: .antigravity
-        )
-        try store.save([profile])
-        let data = snapshot()
-        let monitor = UsageMonitor(
-            store: store, executableURL: URL(fileURLWithPath: "/usr/bin/true"),
-            fetch: { _, _ in data },
-            authenticate: { _, _, _ in
-                Issue.record("Antigravity must not invoke the Codex authentication adapter")
-                return data.identity
-            }
-        )
+        let (monitor, _) = try codexAccounts([], root: root, fetch: { _ in
+            Issue.record("Antigravity must not invoke the Codex fetch adapter")
+            throw CodexOAuthError.signInRequired
+        })
+        let id = try #require(monitor.connectAntigravity())
 
-        let request = monitor.login(profile.id, onURL: { _ in })
+        let request = monitor.login(id, onURL: { _ in })
         await request?.value
 
         #expect(request == nil)
@@ -122,9 +190,7 @@ struct UsageMonitorTests {
             identity: CodexIdentity(email: "local@example.com"), windows: snapshot().windows,
             fetchedAt: now, source: .antigravityApp
         )
-        let monitor = UsageMonitor(
-            store: AccountStore(directory: root), executableURL: nil, fetchAntigravity: { data }
-        )
+        let monitor = UsageMonitor(store: AccountStore(directory: root), fetchAntigravity: { data })
         let id = try #require(monitor.connectAntigravity())
         #expect(monitor.connectAntigravity() == id)
 
@@ -135,7 +201,7 @@ struct UsageMonitorTests {
         #expect(monitor.accounts[0].snapshot == data)
         #expect(monitor.accounts[0].error == nil)
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("profiles").path))
-        let restored = UsageMonitor(store: monitor.store, executableURL: nil)
+        let restored = UsageMonitor(store: monitor.store)
         #expect(restored.accounts[0].profile.provider == .antigravity)
         #expect(restored.accounts[0].snapshot == data)
     }
@@ -143,21 +209,21 @@ struct UsageMonitorTests {
     @Test func mixedProvidersUseOnlyTheirOwnFetchAdapters() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let codex = snapshot(percent: 23)
         let antigravity = CodexUsageSnapshot(
             identity: CodexIdentity(email: "antigravity@example.com"), windows: snapshot(percent: 79).windows,
             fetchedAt: now, source: .antigravityApp
         )
-        let monitor = UsageMonitor(
-            store: AccountStore(directory: root), executableURL: URL(fileURLWithPath: "/usr/bin/true"),
-            fetch: { _, _ in codex }, fetchAntigravity: { antigravity }
+        let base = snapshot(percent: 23)
+        let (monitor, profiles) = try codexAccounts(
+            ["Codex"], root: root,
+            fetch: { CodexUsageSnapshot(identity: $0.identity, windows: base.windows, fetchedAt: base.fetchedAt) },
+            fetchAntigravity: { antigravity }
         )
-        let codexID = try #require(monitor.createAccount(name: "Codex"))
         let antigravityID = try #require(monitor.connectAntigravity())
 
         for request in monitor.refreshAll() { await request.value }
 
-        #expect(monitor.accounts.first(where: { $0.id == codexID })?.snapshot == codex)
+        #expect(monitor.accounts.first(where: { $0.id == profiles[0].id })?.snapshot?.windows == base.windows)
         #expect(monitor.accounts.first(where: { $0.id == antigravityID })?.snapshot == antigravity)
     }
 
@@ -165,16 +231,14 @@ struct UsageMonitorTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let local = snapshot()
-        let first = UsageMonitor(
-            store: AccountStore(directory: root), executableURL: nil, fetchAntigravity: { local }
-        )
+        let first = UsageMonitor(store: AccountStore(directory: root), fetchAntigravity: { local })
         let id = try #require(first.connectAntigravity())
         await first.refresh(id)?.value
         let anonymous = CodexUsageSnapshot(
             identity: CodexIdentity(), windows: snapshot(percent: 72).windows,
             fetchedAt: now, source: .antigravityCLI
         )
-        let restored = UsageMonitor(store: first.store, executableURL: nil, fetchAntigravity: { anonymous })
+        let restored = UsageMonitor(store: first.store, fetchAntigravity: { anonymous })
         #expect(restored.accounts[0].snapshot?.identity.email == "test@example.com")
 
         await restored.refresh(id)?.value
@@ -186,20 +250,17 @@ struct UsageMonitorTests {
     @Test func cacheCannotCrossProviderEvenWithTheSameIDAndHome() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let data = snapshot()
-        let monitor = UsageMonitor(
-            store: AccountStore(directory: root), executableURL: URL(fileURLWithPath: "/usr/bin/true"),
-            fetch: { _, _ in data }
-        )
-        let id = try #require(monitor.createAccount(name: "Codex"))
+        let (monitor, profiles) = try codexAccounts(["Codex"], root: root, fetch: { snapshot(identity: $0.identity) })
+        let id = profiles[0].id
         await monitor.refresh(id)?.value
-        let original = monitor.accounts[0].profile
+        #expect(monitor.accounts[0].snapshot != nil)
         try monitor.store.save([AccountProfile(
-            id: id, name: "Antigravity", homePath: original.homePath,
-            isManaged: false, provider: .antigravity
+            id: id, name: "Antigravity", homePath: profiles[0].homePath,
+            isManaged: false, provider: .antigravity, authentication: .oauth,
+            oauthIdentity: profiles[0].oauthIdentity
         )])
 
-        let restored = UsageMonitor(store: monitor.store, executableURL: nil)
+        let restored = UsageMonitor(store: monitor.store)
 
         #expect(restored.accounts[0].snapshot == nil)
     }
@@ -213,8 +274,7 @@ struct UsageMonitorTests {
             identity: CodexIdentity(), windows: snapshot().windows, fetchedAt: now.addingTimeInterval(-age)
         )
         let monitor = UsageMonitor(
-            store: AccountStore(directory: root), executableURL: nil,
-            fetchAntigravity: { data }, clock: { clock }
+            store: AccountStore(directory: root), fetchAntigravity: { data }, clock: { clock }
         )
         let id = try #require(monitor.connectAntigravity())
         await monitor.refresh(id)?.value
@@ -229,14 +289,13 @@ struct UsageMonitorTests {
     @Test func failureKeepsTheLastSuccessfulSnapshotAndBacksOff() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let data = snapshot()
+        let data = snapshot(identity: credentials(1).identity)
         let responses = MonitorResponses(snapshot: data)
         let clock = now
-        let monitor = UsageMonitor(
-            store: AccountStore(directory: root), executableURL: URL(fileURLWithPath: "/usr/bin/true"),
-            fetch: { _, _ in try await responses.next() }, clock: { clock }
+        let (monitor, profiles) = try codexAccounts(
+            ["계정"], root: root, fetch: { _ in try await responses.next() }, clock: { clock }
         )
-        let id = try #require(monitor.createAccount(name: "계정"))
+        let id = profiles[0].id
         let first = try #require(monitor.refresh(id))
         await first.value
         await responses.fail()
@@ -253,19 +312,18 @@ struct UsageMonitorTests {
     @Test func cacheRestoresOnlyTheSameProfileHome() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let data = snapshot()
-        let store = AccountStore(directory: root)
-        let monitor = UsageMonitor(
-            store: store, executableURL: URL(fileURLWithPath: "/usr/bin/true"),
-            fetch: { _, _ in data }
-        )
-        let id = try #require(monitor.createAccount(name: "계정"))
+        let (monitor, profiles) = try codexAccounts(["계정"], root: root, fetch: { snapshot(identity: $0.identity) })
+        let id = profiles[0].id
         await monitor.refresh(id)?.value
-        let restored = UsageMonitor(store: store, executableURL: nil)
+        let data = try #require(monitor.accounts[0].snapshot)
+        let restored = UsageMonitor(store: monitor.store)
         #expect(restored.accounts[0].snapshot == data)
 
-        try store.save([AccountProfile(id: id, name: "변경한 계정", homePath: "/a/different/home", isManaged: true)])
-        let different = UsageMonitor(store: store, executableURL: nil)
+        try monitor.store.save([AccountProfile(
+            id: id, name: "변경한 계정", homePath: "/a/different/home", isManaged: false,
+            authentication: .oauth, oauthIdentity: profiles[0].oauthIdentity
+        )])
+        let different = UsageMonitor(store: monitor.store)
         #expect(different.accounts[0].snapshot == nil)
     }
 
@@ -275,18 +333,16 @@ struct UsageMonitorTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let gate = MonitorGate<CodexUsageSnapshot>()
         var started = gate.started.makeAsyncIterator()
-        let monitor = UsageMonitor(
-            store: AccountStore(directory: root), executableURL: URL(fileURLWithPath: "/usr/bin/true"),
-            fetch: { _, _ in await gate.wait() }
-        )
-        let id = try #require(monitor.createAccount(name: "계정"))
+        let (monitor, profiles) = try codexAccounts(["계정"], root: root, fetch: { _ in await gate.wait() })
+        let id = profiles[0].id
         let task = try #require(monitor.refresh(id))
         _ = await started.next()
         #expect(monitor.refresh(id) == nil)
 
-        monitor.disconnect(id)
-        await gate.release(snapshot())
+        let removal = monitor.disconnect(id)
+        await gate.release(snapshot(identity: credentials(1).identity))
         await task.value
+        await removal?.value
 
         #expect(monitor.accounts.isEmpty)
         #expect(try monitor.store.load().isEmpty)
@@ -299,102 +355,73 @@ struct UsageMonitorTests {
     func reauthenticationClearsThePreviousIdentityAndDiskSnapshot() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let data = snapshot()
-        let gate = MonitorGate<CodexIdentity>()
+        let gate = MonitorGate<CodexOAuthCredentials>()
         var started = gate.started.makeAsyncIterator()
-        let monitor = UsageMonitor(
-            store: AccountStore(directory: root), executableURL: URL(fileURLWithPath: "/usr/bin/true"),
-            fetch: { _, _ in data },
-            authenticate: { _, _, _ in await gate.wait() }
+        let (monitor, profiles) = try codexAccounts(
+            ["계정"], root: root, authenticate: { _ in await gate.wait() },
+            fetch: { snapshot(identity: $0.identity) }
         )
-        let id = try #require(monitor.createAccount(name: "계정"))
+        let id = profiles[0].id
         await monitor.refresh(id)?.value
+        #expect(monitor.accounts[0].snapshot != nil)
         let pendingLogin = monitor.login(id, onURL: { _ in })
         let task = try #require(pendingLogin)
         _ = await started.next()
 
         #expect(monitor.accounts[0].snapshot == nil)
+        #expect(monitor.accounts[0].profile.oauthIdentity == nil)
         #expect(monitor.accounts[0].isLoggingIn)
-        let reloaded = UsageMonitor(store: monitor.store, executableURL: nil)
+        let reloaded = UsageMonitor(store: monitor.store)
         #expect(reloaded.accounts[0].snapshot == nil)
+        #expect(reloaded.accounts[0].profile.oauthIdentity == nil)
 
         monitor.cancel(id)
-        await gate.release(CodexIdentity())
+        await gate.release(credentials(1))
         await task.value
         #expect(!monitor.accounts[0].isLoggingIn)
         #expect(monitor.accounts[0].snapshot == nil)
     }
 
-    @Test func missingCLIDoesNotReplaceCachedUsageWithZero() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let data = snapshot()
-        let monitor = UsageMonitor(
-            store: AccountStore(directory: root), executableURL: URL(fileURLWithPath: "/usr/bin/true"),
-            fetch: { _, _ in data }
-        )
-        let id = try #require(monitor.createAccount(name: "계정"))
-        await monitor.refresh(id)?.value
-        let unavailable = UsageMonitor(store: monitor.store, executableURL: nil)
-        #expect(unavailable.refresh(id) == nil)
-        #expect(unavailable.accounts[0].snapshot == data)
-        #expect(unavailable.accounts[0].error != nil)
-    }
-
     @Test func twoAccountsKeepIndependentUsage() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = AccountStore(directory: root)
-        let first = try store.createManagedProfile(name: "개인")
-        let second = try store.createManagedProfile(name: "업무")
-        try store.save([first, second])
-        let firstData = snapshot(percent: 12)
-        let secondData = snapshot(percent: 86)
-        let monitor = UsageMonitor(
-            store: store, executableURL: URL(fileURLWithPath: "/usr/bin/true"),
-            fetch: { _, home in home == first.homeURL ? firstData : secondData }
-        )
+        let (monitor, _) = try codexAccounts(["개인", "업무"], root: root, fetch: {
+            snapshot(percent: $0.accountID == "acct-1" ? 12 : 86, identity: $0.identity)
+        })
         for task in monitor.refreshAll() { await task.value }
 
-        #expect(monitor.accounts[0].snapshot == firstData)
-        #expect(monitor.accounts[1].snapshot == secondData)
-        let restored = UsageMonitor(store: store, executableURL: nil)
-        #expect(restored.accounts[0].snapshot == firstData)
-        #expect(restored.accounts[1].snapshot == secondData)
+        #expect(monitor.accounts[0].snapshot?.windows.first?.usedPercent == 12)
+        #expect(monitor.accounts[1].snapshot?.windows.first?.usedPercent == 86)
+        let restored = UsageMonitor(store: monitor.store)
+        #expect(restored.accounts[0].snapshot == monitor.accounts[0].snapshot)
+        #expect(restored.accounts[1].snapshot == monitor.accounts[1].snapshot)
     }
 
     @Test(.timeLimit(.minutes(1)))
     func successfulSecondLoginClearsProgressAndKeepsFirstAccount() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = AccountStore(directory: root)
-        let first = try store.createManagedProfile(name: "첫 계정")
-        let second = try store.createManagedProfile(name: "두 번째 계정")
-        try store.save([first, second])
-        let firstData = snapshot(percent: 42)
-        let secondData = CodexUsageSnapshot(
-            identity: CodexIdentity(email: "second@example.com", planType: "prolite"),
-            windows: snapshot(percent: 100).windows, fetchedAt: now
+        let second = credentials(2)
+        let (monitor, profiles) = try codexAccounts(
+            ["첫 계정", "두 번째 계정"], root: root, authenticate: { _ in second },
+            fetch: { snapshot(percent: $0.accountID == "acct-1" ? 42 : 100, identity: $0.identity) }
         )
-        let monitor = UsageMonitor(
-            store: store, executableURL: URL(fileURLWithPath: "/usr/bin/true"),
-            fetch: { _, home in home == first.homeURL ? firstData : secondData },
-            authenticate: { _, _, _ in secondData.identity }
-        )
-        await monitor.refresh(first.id)?.value
+        await monitor.refresh(profiles[0].id)?.value
+        let firstData = try #require(monitor.accounts[0].snapshot)
         var publishedLoginStates: [Bool] = []
         let observation = monitor.$accounts.sink { accounts in
-            if let account = accounts.first(where: { $0.id == second.id }) {
+            if let account = accounts.first(where: { $0.id == profiles[1].id }) {
                 publishedLoginStates.append(account.isLoggingIn)
             }
         }
         defer { observation.cancel() }
-        let pending = monitor.login(second.id, onURL: { _ in })
+        let pending = monitor.login(profiles[1].id, onURL: { _ in })
         let task = try #require(pending)
         await task.value
 
         #expect(monitor.accounts[0].snapshot == firstData)
-        #expect(monitor.accounts[1].snapshot == secondData)
+        #expect(monitor.accounts[1].snapshot?.identity == second.identity)
+        #expect(monitor.accounts[1].snapshot?.windows.first?.usedPercent == 100)
         #expect(!monitor.accounts[1].isLoggingIn)
         #expect(!monitor.isWorking)
         #expect(monitor.notice == nil)
@@ -406,15 +433,13 @@ struct UsageMonitorTests {
     func repeatedLoginJoinsPendingFlowWithoutLeavingFailureNotice() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let data = snapshot()
-        let gate = MonitorGate<CodexIdentity>()
+        let gate = MonitorGate<CodexOAuthCredentials>()
         var started = gate.started.makeAsyncIterator()
-        let monitor = UsageMonitor(
-            store: AccountStore(directory: root), executableURL: URL(fileURLWithPath: "/usr/bin/true"),
-            fetch: { _, _ in data },
-            authenticate: { _, _, _ in await gate.wait() }
+        let (monitor, profiles) = try codexAccounts(
+            ["두 번째 계정"], root: root, authenticate: { _ in await gate.wait() },
+            fetch: { snapshot(identity: $0.identity) }
         )
-        let id = try #require(monitor.createAccount(name: "두 번째 계정"))
+        let id = profiles[0].id
         let pending = monitor.login(id, onURL: { _ in })
         let task = try #require(pending)
         _ = await started.next()
@@ -423,10 +448,10 @@ struct UsageMonitorTests {
         #expect(duplicate != nil)
         #expect(monitor.notice == nil)
         #expect(await gate.callCount == 1)
-        await gate.release(data.identity)
+        await gate.release(credentials(1))
         await task.value
 
-        #expect(monitor.accounts[0].snapshot == data)
+        #expect(monitor.accounts[0].snapshot == snapshot(identity: credentials(1).identity))
         #expect(!monitor.accounts[0].isLoggingIn)
         #expect(monitor.notice == nil)
     }
@@ -434,7 +459,7 @@ struct UsageMonitorTests {
     @Test @MainActor func renamePersistsAliasAndRejectsEmpty() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let monitor = UsageMonitor(store: AccountStore(directory: root), executableURL: nil)
+        let monitor = UsageMonitor(store: AccountStore(directory: root))
         let id = try #require(monitor.createCodexAccount(name: "Codex"))
 
         #expect(monitor.rename(id, to: "  업무용  "))
@@ -445,7 +470,7 @@ struct UsageMonitorTests {
         #expect(!monitor.rename(id, to: "업무용"))
         #expect(monitor.accounts[0].profile.name == "업무용")
 
-        let restored = UsageMonitor(store: monitor.store, executableURL: nil)
+        let restored = UsageMonitor(store: monitor.store)
         #expect(restored.accounts[0].profile.name == "업무용")
     }
 
@@ -453,14 +478,11 @@ struct UsageMonitorTests {
     func cancelThenShutdownWaitsForAlreadyCancelledWork() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let data = snapshot()
+        let data = snapshot(identity: credentials(1).identity)
         let gate = MonitorGate<CodexUsageSnapshot>()
         var started = gate.started.makeAsyncIterator()
-        let monitor = UsageMonitor(
-            store: AccountStore(directory: root), executableURL: URL(fileURLWithPath: "/usr/bin/true"),
-            fetch: { _, _ in await gate.wait() }
-        )
-        let id = try #require(monitor.createAccount(name: "계정"))
+        let (monitor, profiles) = try codexAccounts(["계정"], root: root, fetch: { _ in await gate.wait() })
+        let id = profiles[0].id
         let request = try #require(monitor.refresh(id))
         _ = await started.next()
         monitor.cancel(id)
@@ -487,11 +509,11 @@ struct UsageMonitorTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = AccountStore(directory: root)
-        let profiles = ["개인", "업무", "예비"].enumerated().map {
-            AccountProfile(name: $0.element, homePath: "/codex/\($0.offset)", isManaged: false)
+        let profiles = ["개인", "업무", "예비"].map {
+            AccountProfile(name: $0, homePath: root.path, isManaged: false, authentication: .oauth)
         }
         try store.save(profiles)
-        let monitor = UsageMonitor(store: store, executableURL: nil)
+        let monitor = UsageMonitor(store: store)
 
         #expect(monitor.move(profiles[0].id, to: 2))
         #expect(monitor.accounts.map(\.profile.name) == ["업무", "예비", "개인"])
@@ -520,7 +542,7 @@ private actor MonitorResponses {
     init(snapshot: CodexUsageSnapshot) { self.snapshot = snapshot }
     func fail() { failing = true }
     func next() throws -> CodexUsageSnapshot {
-        if failing { throw CodexClientError.notLoggedIn }
+        if failing { throw CodexOAuthError.networkFailure }
         return snapshot
     }
 

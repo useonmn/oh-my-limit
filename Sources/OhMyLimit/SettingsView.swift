@@ -4,25 +4,16 @@ import SwiftUI
 
 @MainActor
 private final class AccountDraft: ObservableObject {
-    @Published var name = ""
     @Published var selectedProvider: AccountProvider = .codex
-    @Published var showCodexLocal = false
     @Published var showAntigravityLocal = false
-    @Published var showClaudeLocal = false
 }
 
 struct SettingsView: View {
     @ObservedObject var monitor: UsageMonitor
-    let chooseExecutable: () -> Void
-    let connectCurrent: () -> Void
-    let chooseHome: (String) -> Void
-    let addAccount: (String) -> Void
     let loginAntigravity: () -> Void
     let connectAntigravity: () -> Void
     let openAntigravity: () -> Void
     let loginCodex: () -> Void
-    let connectClaude: () -> Void
-    let loginClaude: () -> Void
     let loginClaudeAccount: () -> Void
     let renameAccount: (UUID, String) -> Void
     let refreshAccount: (UUID) -> Void
@@ -95,58 +86,18 @@ struct SettingsView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(monitor.accounts.contains(where: \.isLoggingIn))
-            DisclosureGroup("Codex CLI로 연결", isExpanded: $draft.showCodexLocal) {
-                VStack(alignment: .leading, spacing: Theme.compact) {
-                    Button("현재 Codex 계정 연결", action: connectCurrent)
-                    Button("기존 Codex 폴더 선택…") { chooseHome(draft.name) }
-                    TextField("별도 계정 이름", text: $draft.name)
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("별도 Codex 계정 이름")
-                    Button("별도 계정으로 로그인") { addAccount(draft.name) }
-                        .disabled(monitor.executableURL == nil || monitor.accounts.contains(where: \.isLoggingIn))
-                    Button("CLI 실행 파일 선택…", action: chooseExecutable)
-                        .help(monitor.executableURL?.path ?? "Codex CLI를 찾지 못했습니다.")
-                    if monitor.executableURL == nil {
-                        Link("Codex CLI 설치 안내", destination: URL(string: "https://developers.openai.com/codex/cli")!)
-                    }
-                }
-                .buttonStyle(.bordered)
-                .padding(.top, Theme.compact)
-            }
-            .font(Theme.panelBody)
+            Text("브라우저에서 ChatGPT에 로그인하면 앱 키체인에 저장합니다. Codex CLI는 필요하지 않습니다.")
+                .font(Theme.caption).foregroundStyle(Theme.panelSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         case .claude:
             Button(action: loginClaudeAccount) {
                 Text("Claude 계정 연결").frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .disabled(monitor.accounts.contains(where: \.isLoggingIn))
-            Text("사용량 읽기 권한만 받아 앱 키체인에 저장합니다. Claude Code를 쓰지 않아도 계속 유지됩니다.")
+            Text("사용량 읽기 권한만 받아 앱 키체인에 저장합니다. Claude Code는 필요하지 않습니다.")
                 .font(Theme.caption).foregroundStyle(Theme.panelSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            DisclosureGroup("Claude Code로 연결", isExpanded: $draft.showClaudeLocal) {
-                VStack(alignment: .leading, spacing: Theme.compact) {
-                    if monitor.accounts.contains(where: {
-                        $0.profile.provider == .claude && $0.profile.authentication == .local
-                    }) {
-                        Text("이미 연결됨 · 위 계정 메뉴에서 다시 로그인")
-                            .font(Theme.caption).foregroundStyle(Theme.panelSecondary)
-                    } else {
-                        let hasCLI = ClaudeClient.findExecutable() != nil
-                        Button("1. Claude Code로 로그인…", action: loginClaude)
-                            .disabled(!hasCLI)
-                        Button("2. 로그인된 계정 연결", action: connectClaude)
-                        if !hasCLI {
-                            Link("Claude Code 설치 안내", destination: URL(string: "https://code.claude.com/docs/en/setup")!)
-                        }
-                        Text("Claude Code를 오래 쓰지 않으면 토큰이 갱신되지 않아 사용량이 멈출 수 있습니다.")
-                            .font(Theme.caption).foregroundStyle(Theme.panelSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .buttonStyle(.bordered)
-                .padding(.top, Theme.compact)
-            }
-            .font(Theme.panelBody)
         case .antigravity:
             Button(action: loginAntigravity) {
                 Text("Google 계정 연결").frame(maxWidth: .infinity)
@@ -281,8 +232,6 @@ private struct AccountSettingsRow: View {
             case .claude: method = "Claude 직접 연결"
             case .antigravity: method = "Google 직접 연결"
             }
-        } else if state.profile.isManaged {
-            method = "앱 전용 Codex 폴더"
         } else {
             method = "로컬 연결"
         }
@@ -292,8 +241,8 @@ private struct AccountSettingsRow: View {
 
     private var loginLabel: String {
         switch state.profile.provider {
-        case .codex: state.profile.authentication == .oauth ? "ChatGPT 다시 로그인" : "Codex 다시 로그인"
-        case .claude: state.profile.authentication == .oauth ? "Claude 다시 로그인" : "Claude Code로 로그인…"
+        case .codex: "ChatGPT 다시 로그인"
+        case .claude: "Claude 다시 로그인"
         case .antigravity: state.profile.authentication == .oauth ? "Google 다시 로그인" : "Antigravity 열기"
         }
     }

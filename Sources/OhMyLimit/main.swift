@@ -26,9 +26,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         let dataDirectory = argument("--data-directory").map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("OhMyLimit", isDirectory: true)
-        let configured = UserDefaults.standard.string(forKey: "codexExecutablePath")
-        let executable = configured.map { URL(fileURLWithPath: $0) } ?? CodexClient.findExecutable()
-        let model = UsageMonitor(store: AccountStore(directory: dataDirectory), executableURL: executable)
+        let model = UsageMonitor(store: AccountStore(directory: dataDirectory))
         monitor = model
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -54,7 +52,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             monitor: model, selection: selection, flow: flow, actions: actions,
             settingsView: AnyView(settingsView(for: model))
         ))
-        subscription = model.$accounts.combineLatest(model.$notice, model.$executableURL, selection.$selectedID)
+        subscription = model.$accounts.combineLatest(model.$notice, selection.$selectedID)
             .combineLatest(flow.$showingSettings)
             .sink { [weak self] _, showingSettings in
                 // @Published emits before storage commits. Native sizing can
@@ -67,7 +65,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
                     self.setPanelContentSize(NSSize(
                         width: Theme.width,
                         height: showingSettings ? Theme.settingsHeight(accountCount: states.count) : PopoverView.height(
-                            for: states, notice: monitor.notice, hasCLI: monitor.executableURL != nil,
+                            for: states, notice: monitor.notice,
                             selectedID: self.selection.selectedID
                         )
                     ))
@@ -122,7 +120,6 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             selectAccount: { [weak self] id in self?.selection.select(id) },
             refreshAll: { [weak self] in self?.monitor?.refreshAll() },
             settings: { [weak self] in self?.showSettings() },
-            connectCurrent: { [weak self] in self?.connectCurrent() },
             addAccount: { [weak self] in self?.showSettings() },
             quit: { NSApp.terminate(nil) },
             dismissNotice: { [weak self] in self?.monitor?.clearNotice() },
@@ -235,24 +232,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func woke() { monitor?.refreshAll(manual: false) }
 
-    private func connectCurrent() {
-        guard let monitor else { return }
-        let home = ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex", isDirectory: true)
-        if let id = monitor.connectExisting(home: home, name: "현재 Codex") {
-            selection.select(id)
-            monitor.refresh(id)
-            flow.showingSettings = false
-        }
-    }
-
     private func login(_ id: UUID) {
         selection.select(id)
-        if let profile = monitor?.accounts.first(where: { $0.id == id })?.profile,
-           profile.provider == .claude && profile.authentication == .local {
-            loginClaudeCode()
-            return
-        }
         if let profile = monitor?.accounts.first(where: { $0.id == id })?.profile,
            profile.provider == .antigravity && profile.authentication == .local {
             openAntigravity()
@@ -281,49 +262,6 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(URL(string: "https://antigravity.google/download")!)
     }
 
-    private func loginClaudeCode() {
-        guard let executable = ClaudeClient.findExecutable() else {
-            showClaudeLoginError(ClaudeClientError.cliMissing)
-            return
-        }
-        guard let monitor else { return }
-        do {
-            let config = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
-            let script = try ClaudeClient.prepareLoginCommand(
-                in: monitor.store.directory.appendingPathComponent("LoginCommands", isDirectory: true),
-                executableURL: executable, configDirectory: config
-            )
-            NSWorkspace.shared.open(
-                [script], withApplicationAt: URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"),
-                configuration: NSWorkspace.OpenConfiguration()
-            ) { [weak self] _, error in
-                guard let error else { return }
-                try? FileManager.default.removeItem(at: script)
-                Task { @MainActor [weak self] in self?.showClaudeLoginError(error) }
-            }
-        } catch {
-            showClaudeLoginError(error)
-        }
-    }
-
-    private func showClaudeLoginError(_ error: Error) {
-        let alert = NSAlert()
-        alert.messageText = "Claude Code 로그인을 시작하지 못했습니다"
-        alert.informativeText = error.localizedDescription
-        alert.runModal()
-    }
-
-    private func connectClaude() {
-        guard let monitor else { return }
-        let home = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true)
-        if let id = monitor.connectClaude(home: home) {
-            selection.select(id)
-            monitor.refresh(id)
-            flow.showingSettings = false
-        }
-    }
-
     private func showSettings() {
         flow.showingSettings = true
         revealPopover()
@@ -332,14 +270,6 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private func settingsView(for monitor: UsageMonitor) -> SettingsView {
         SettingsView(
             monitor: monitor,
-            chooseExecutable: { [weak self] in self?.chooseExecutable() },
-            connectCurrent: { [weak self] in self?.connectCurrent() },
-            chooseHome: { [weak self] name in self?.chooseHome(name: name) },
-            addAccount: { [weak self] name in
-                guard let self, let id = self.monitor?.createAccount(name: name) else { return }
-                self.login(id)
-                self.flow.showingSettings = false
-            },
             loginAntigravity: { [weak self] in
                 guard let self, let id = self.monitor?.createAntigravityAccount() else { return }
                 self.login(id)
@@ -352,8 +282,6 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
                 self.login(id)
                 self.flow.showingSettings = false
             },
-            connectClaude: { [weak self] in self?.connectClaude() },
-            loginClaude: { [weak self] in self?.loginClaudeCode() },
             loginClaudeAccount: { [weak self] in
                 guard let self, let id = self.monitor?.createClaudeAccount() else { return }
                 self.login(id)
@@ -366,37 +294,6 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             authorizeKeychain: { [weak self] id in self?.monitor?.authorizeKeychain(id) },
             disconnectAccount: { [weak self] id in self?.monitor?.disconnect(id) }
         )
-    }
-
-    private func chooseExecutable() {
-        let panel = NSOpenPanel()
-        panel.title = "Codex 실행 파일 선택"
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.showsHiddenFiles = true
-        panel.directoryURL = monitor?.executableURL?.deletingLastPathComponent()
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        monitor?.setExecutable(url)
-        if monitor?.executableURL == url {
-            UserDefaults.standard.set(url.path, forKey: "codexExecutablePath")
-            monitor?.refreshAll()
-        }
-    }
-
-    private func chooseHome(name: String) {
-        let panel = NSOpenPanel()
-        panel.title = "기존 Codex 홈 폴더 선택"
-        panel.message = "auth.json 또는 Codex 인증 저장소를 사용하는 홈 폴더를 선택하세요."
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.showsHiddenFiles = true
-        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
-        guard panel.runModal() == .OK, let url = panel.url,
-              let id = monitor?.connectExisting(home: url, name: name) else { return }
-        selection.select(id)
-        monitor?.refresh(id)
-        flow.showingSettings = false
     }
 
     private func showPreview(_ scenario: String) {
@@ -426,8 +323,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
                     try store.save([
                         AccountProfile(name: "개인", homePath: store.directory.path, isManaged: false,
                                        authentication: .oauth, oauthIdentity: CodexIdentity(email: "personal@example.com")),
-                        AccountProfile(name: "업무", homePath: "/preview/codex", isManaged: false),
-                        AccountProfile(name: "Claude", homePath: "/preview/claude", isManaged: false, provider: .claude),
+                        AccountProfile(name: "업무", homePath: store.directory.path, isManaged: false,
+                                       authentication: .oauth, oauthIdentity: CodexIdentity(email: "work@example.com")),
+                        AccountProfile(name: "Claude", homePath: store.directory.path, isManaged: false,
+                                       provider: .claude, authentication: .oauth,
+                                       oauthIdentity: CodexIdentity(email: "claude@example.com")),
                         AccountProfile(name: "Antigravity", homePath: store.directory.path, isManaged: false,
                                        provider: .antigravity, authentication: .oauth,
                                        oauthIdentity: CodexIdentity(email: "team@example.com"))
@@ -438,11 +338,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
                     exit(1)
                 }
             }
-            let model = UsageMonitor(store: store, executableURL: CodexClient.findExecutable())
+            let model = UsageMonitor(store: store)
             let settings = AnyView(SettingsView(
-                monitor: model, chooseExecutable: {}, connectCurrent: {}, chooseHome: { _ in }, addAccount: { _ in },
+                monitor: model,
                 loginAntigravity: {}, connectAntigravity: {}, openAntigravity: {}, loginCodex: {},
-                connectClaude: {}, loginClaude: {}, loginClaudeAccount: {},
+                loginClaudeAccount: {},
                 renameAccount: { _, _ in }, refreshAccount: { _ in }, loginAccount: { _ in },
                 cancelLogin: { _ in }, authorizeKeychain: { _ in }, disconnectAccount: { _ in },
                 initialProvider: scenario == "settings-claude" ? .claude : .codex
@@ -459,7 +359,6 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             let selectedID = accounts.indices.contains(index) ? accounts[index].id : accounts.first?.id
             content = AnyView(PopoverView(
                 accounts: accounts, notice: nil,
-                hasCLI: scenario != "missing-cli" && !scenario.hasPrefix("antigravity"),
                 now: PreviewFixtures.now, preview: true, selectedID: selectedID,
                 actions: PopoverActions()
             ))
@@ -555,37 +454,17 @@ private final class PopoverPanel: NSPanel {
     override var canBecomeMain: Bool { true }
 }
 
-if CommandLine.arguments.contains("--probe") || CommandLine.arguments.contains("--probe-antigravity")
-    || CommandLine.arguments.contains("--probe-claude") {
-    let antigravity = CommandLine.arguments.contains("--probe-antigravity")
-    let claude = CommandLine.arguments.contains("--probe-claude")
+if CommandLine.arguments.contains("--probe-antigravity") {
     Task { @MainActor in
         do {
-            let snapshot: CodexUsageSnapshot
-            if antigravity {
-                let executable: URL?
-                if let index = CommandLine.arguments.firstIndex(of: "--antigravity-cli"),
-                   index + 1 < CommandLine.arguments.count {
-                    executable = URL(fileURLWithPath: CommandLine.arguments[index + 1])
-                } else {
-                    executable = nil
-                }
-                snapshot = try await AntigravityClient(executableURL: executable).fetchUsage()
-            } else if claude {
-                let home = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
-                    ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true)
-                snapshot = try await ClaudeClient().fetchUsage(home: home)
+            let executable: URL?
+            if let index = CommandLine.arguments.firstIndex(of: "--antigravity-cli"),
+               index + 1 < CommandLine.arguments.count {
+                executable = URL(fileURLWithPath: CommandLine.arguments[index + 1])
             } else {
-                guard let executable = CodexClient.findExecutable() else { throw CocoaError(.executableNotLoadable) }
-                let home: URL
-                if let index = CommandLine.arguments.firstIndex(of: "--codex-home"), index + 1 < CommandLine.arguments.count {
-                    home = URL(fileURLWithPath: CommandLine.arguments[index + 1])
-                } else {
-                    home = ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
-                        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
-                }
-                snapshot = try await CodexClient(executableURL: executable).fetchUsage(home: home)
+                executable = nil
             }
+            let snapshot = try await AntigravityClient(executableURL: executable).fetchUsage()
             struct ProbeResult: Encodable {
                 let plan: String?
                 let windows: [CodexQuotaWindow]
@@ -603,8 +482,7 @@ if CommandLine.arguments.contains("--probe") || CommandLine.arguments.contains("
             FileHandle.standardOutput.write(Data("\n".utf8))
             exit(0)
         } catch {
-            let provider = claude ? "Claude" : antigravity ? "Antigravity" : "Codex"
-            FileHandle.standardError.write(Data("\(provider): \(error.localizedDescription)\n".utf8))
+            FileHandle.standardError.write(Data("Antigravity: \(error.localizedDescription)\n".utf8))
             exit(1)
         }
     }

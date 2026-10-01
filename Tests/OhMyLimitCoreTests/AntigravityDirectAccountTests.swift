@@ -13,7 +13,7 @@ import Testing
             fetch: { _ in throw AntigravityOAuthError.quotaUnavailable }
         )
         let monitor = UsageMonitor(
-            store: AccountStore(directory: root), executableURL: nil,
+            store: AccountStore(directory: root),
             fetchAntigravity: {
                 Issue.record("Direct login must not use a local account")
                 throw AntigravityOAuthError.quotaUnavailable
@@ -45,7 +45,7 @@ import Testing
                 CodexUsageSnapshot(identity: input.identity, windows: [], source: .antigravityOAuth)
             }
         )
-        let monitor = UsageMonitor(store: AccountStore(directory: root), executableURL: nil, directAntigravity: direct)
+        let monitor = UsageMonitor(store: AccountStore(directory: root), directAntigravity: direct)
         let first = try #require(monitor.createAntigravityAccount(name: "First"))
         let second = try #require(monitor.createAntigravityAccount(name: "Second"))
         let local = try #require(monitor.connectAntigravity())
@@ -53,12 +53,12 @@ import Testing
         #expect(monitor.connectAntigravity() == local)
         await monitor.login(first, onURL: { _ in })?.value
         #expect(monitor.accounts[0].snapshot?.source == .antigravityOAuth)
-        let restored = UsageMonitor(store: monitor.store, executableURL: nil)
+        let restored = UsageMonitor(store: monitor.store)
         #expect(restored.accounts[0].snapshot == monitor.accounts[0].snapshot)
         var profiles = try monitor.store.load()
         profiles[0].oauthIdentity = CodexIdentity(email: "other@example.invalid", accountID: "other")
         try monitor.store.save(profiles)
-        let changed = UsageMonitor(store: monitor.store, executableURL: nil)
+        let changed = UsageMonitor(store: monitor.store)
         #expect(changed.accounts[0].snapshot == nil)
         #expect(try await keychain.load(profileID: second) == nil)
     }
@@ -74,7 +74,7 @@ import Testing
             keychain: keychain, authenticate: { _ in await gate.wait() }, renew: { $0 },
             fetch: { _ in throw AntigravityOAuthError.quotaUnavailable }
         )
-        let monitor = UsageMonitor(store: AccountStore(directory: root), executableURL: nil, directAntigravity: direct)
+        let monitor = UsageMonitor(store: AccountStore(directory: root), directAntigravity: direct)
         let id = try #require(monitor.createAntigravityAccount())
         let pendingLogin = monitor.login(id, onURL: { _ in })
         let login = try #require(pendingLogin)
@@ -97,7 +97,7 @@ import Testing
             provider: .antigravity, authentication: .oauth
         )
         try store.save([profile])
-        let monitor = UsageMonitor(store: store, executableURL: nil)
+        let monitor = UsageMonitor(store: store)
 
         let task = monitor.login(profile.id, onURL: { _ in })
 
