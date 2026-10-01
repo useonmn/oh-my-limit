@@ -8,6 +8,7 @@ private final class AccountDraft: ObservableObject {
     @Published var selectedProvider: AccountProvider = .codex
     @Published var showCodexLocal = false
     @Published var showAntigravityLocal = false
+    @Published var showClaudeLocal = false
 }
 
 struct SettingsView: View {
@@ -22,12 +23,14 @@ struct SettingsView: View {
     let loginCodex: () -> Void
     let connectClaude: () -> Void
     let loginClaude: () -> Void
+    let loginClaudeAccount: () -> Void
     let renameAccount: (UUID, String) -> Void
     let refreshAccount: (UUID) -> Void
     let loginAccount: (UUID) -> Void
     let cancelLogin: (UUID) -> Void
     let authorizeKeychain: (UUID) -> Void
     let disconnectAccount: (UUID) -> Void
+    var initialProvider: AccountProvider = .codex
     @StateObject private var draft = AccountDraft()
 
     var body: some View {
@@ -38,6 +41,7 @@ struct SettingsView: View {
         }
         .foregroundStyle(Theme.panelPrimary)
         .tint(Theme.mint)
+        .onAppear { draft.selectedProvider = initialProvider }
     }
 
     private var settingsContent: some View {
@@ -111,21 +115,38 @@ struct SettingsView: View {
             }
             .font(Theme.panelBody)
         case .claude:
-            if monitor.accounts.contains(where: { $0.profile.provider == .claude }) {
-                Text("이미 연결됨 · 위 계정 메뉴에서 다시 로그인")
-                    .font(Theme.caption).foregroundStyle(Theme.panelSecondary)
-            } else {
-                let hasCLI = ClaudeClient.findExecutable() != nil
-                Button("1. Claude Code로 로그인…", action: loginClaude)
-                    .disabled(!hasCLI)
-                Button("2. 로그인된 계정 연결", action: connectClaude)
-                    .buttonStyle(.borderedProminent)
-                if !hasCLI {
-                    Link("Claude Code 설치 안내", destination: URL(string: "https://code.claude.com/docs/en/setup")!)
-                }
-                Text("이미 로그인했다면 1단계를 건너뛰세요.")
-                    .font(Theme.caption).foregroundStyle(Theme.panelSecondary)
+            Button(action: loginClaudeAccount) {
+                Text("Claude 계정 연결").frame(maxWidth: .infinity)
             }
+            .buttonStyle(.borderedProminent)
+            .disabled(monitor.accounts.contains(where: \.isLoggingIn))
+            Text("사용량 읽기 권한만 받아 앱 키체인에 저장합니다. Claude Code를 쓰지 않아도 계속 유지됩니다.")
+                .font(Theme.caption).foregroundStyle(Theme.panelSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup("Claude Code로 연결", isExpanded: $draft.showClaudeLocal) {
+                VStack(alignment: .leading, spacing: Theme.compact) {
+                    if monitor.accounts.contains(where: {
+                        $0.profile.provider == .claude && $0.profile.authentication == .local
+                    }) {
+                        Text("이미 연결됨 · 위 계정 메뉴에서 다시 로그인")
+                            .font(Theme.caption).foregroundStyle(Theme.panelSecondary)
+                    } else {
+                        let hasCLI = ClaudeClient.findExecutable() != nil
+                        Button("1. Claude Code로 로그인…", action: loginClaude)
+                            .disabled(!hasCLI)
+                        Button("2. 로그인된 계정 연결", action: connectClaude)
+                        if !hasCLI {
+                            Link("Claude Code 설치 안내", destination: URL(string: "https://code.claude.com/docs/en/setup")!)
+                        }
+                        Text("Claude Code를 오래 쓰지 않으면 토큰이 갱신되지 않아 사용량이 멈출 수 있습니다.")
+                            .font(Theme.caption).foregroundStyle(Theme.panelSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .padding(.top, Theme.compact)
+            }
+            .font(Theme.panelBody)
         case .antigravity:
             Button(action: loginAntigravity) {
                 Text("Google 계정 연결").frame(maxWidth: .infinity)
@@ -255,7 +276,11 @@ private struct AccountSettingsRow: View {
     private var connectionDescription: String {
         let method: String
         if state.profile.authentication == .oauth {
-            method = state.profile.provider == .codex ? "ChatGPT 직접 연결" : "Google 직접 연결"
+            switch state.profile.provider {
+            case .codex: method = "ChatGPT 직접 연결"
+            case .claude: method = "Claude 직접 연결"
+            case .antigravity: method = "Google 직접 연결"
+            }
         } else if state.profile.isManaged {
             method = "앱 전용 Codex 폴더"
         } else {
@@ -268,7 +293,7 @@ private struct AccountSettingsRow: View {
     private var loginLabel: String {
         switch state.profile.provider {
         case .codex: state.profile.authentication == .oauth ? "ChatGPT 다시 로그인" : "Codex 다시 로그인"
-        case .claude: "Claude Code로 로그인…"
+        case .claude: state.profile.authentication == .oauth ? "Claude 다시 로그인" : "Claude Code로 로그인…"
         case .antigravity: state.profile.authentication == .oauth ? "Google 다시 로그인" : "Antigravity 열기"
         }
     }

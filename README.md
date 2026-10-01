@@ -29,7 +29,7 @@ Claude Code에 로그인한 뒤 앱 설정에서 연결합니다. 기존 Mac의 
 필요한 환경:
 
 - macOS 14 이상
-- Swift 6 이상이 포함된 Xcode 또는 Command Line Tools
+- 소스에서 직접 빌드할 때만 Swift 6 이상이 포함된 Xcode 또는 Command Line Tools
 - Codex 직접 연결: ChatGPT 계정과 브라우저 (CLI 설치 불필요)
 - Codex 로컬 연결: 로그인된 공식 Codex CLI
 - Claude 로컬 연결: 로그인된 공식 Claude Code (`claude auth login`)
@@ -46,6 +46,19 @@ open dist/OhMyLimit.app
 현재 빌드는 로컬 ad-hoc 서명이며 Developer ID 공증 배포본은 아닙니다.
 첫 정상 실행 때 사용자 LaunchAgent로 등록되며, 다음 macOS 로그인부터 자동 실행됩니다.
 자동 실행은 **시스템 설정 → 일반 → 로그인 항목 및 확장 프로그램**에서 끌 수 있습니다.
+
+## 개인용 DMG 만들기
+
+```sh
+./scripts/build-dmg.sh
+```
+
+`dist/OhMyLimit-0.1.0-macOS-arm64.dmg`가 만들어집니다. DMG를 열고 앱 아이콘을
+`Applications` 바로가기로 드래그한 다음 응용 프로그램 폴더에서 실행하세요.
+다운받아 설치하는 Mac에는 Swift나 Xcode가 필요하지 않습니다. 이 빌드는 Apple Silicon
+Mac용이며, 현재 로컬 서명은 Apple 공증을 받지 않았으므로 다른 Mac에서 첫 실행이
+차단되면 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**로 앱을 허용해야 합니다.
+시스템 전체의 Gatekeeper를 끌 필요는 없습니다. 계정 인증 정보는 DMG에 들어가지 않습니다.
 
 ## 원형 사용률 패널
 

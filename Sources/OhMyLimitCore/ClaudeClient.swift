@@ -6,6 +6,9 @@ public enum ClaudeClientError: Error, LocalizedError, Sendable {
     case notLoggedIn
     case keychainUnavailable
     case expired
+    /// The short-lived access token lapsed but Claude Code still holds a live refresh
+    /// token; only Claude Code may rotate it, so this is a wait, not a logout.
+    case awaitingClaudeCodeRefresh
     case unauthorized
     case rateLimited
     case requestFailed
@@ -17,6 +20,7 @@ public enum ClaudeClientError: Error, LocalizedError, Sendable {
         case .notLoggedIn: "Claude Code에 먼저 로그인해 주세요."
         case .keychainUnavailable: "Claude Code 키체인을 읽을 수 없습니다. 키체인 접근을 허용해 주세요."
         case .expired, .unauthorized: "Claude Code 로그인이 만료되었습니다. Claude Code에서 다시 로그인해 주세요."
+        case .awaitingClaudeCodeRefresh: "Claude Code 로그인은 유지 중입니다. Claude Code를 한 번 실행하면 토큰이 갱신되어 사용량이 다시 표시됩니다."
         case .rateLimited: "Claude 사용량 조회가 제한되었습니다. 잠시 후 다시 시도해 주세요."
         case .requestFailed: "Claude 사용량을 가져오지 못했습니다. 네트워크를 확인해 주세요."
         case .cliMissing: "Claude Code 실행 파일을 찾지 못했습니다. 먼저 Claude Code를 설치해 주세요."
@@ -79,11 +83,16 @@ public struct ClaudeClient: Sendable {
     public func fetchUsage(home: URL, allowKeychainInteraction: Bool = false) async throws -> CodexUsageSnapshot {
         try Task.checkCancellation()
         let credentials = try Self.credentials(home: home, allowInteraction: allowKeychainInteraction)
-        guard credentials.expiresAt.map({ $0 > Date().timeIntervalSince1970 * 1_000 }) ?? true else {
-            throw ClaudeClientError.expired
-        }
+        try credentials.checkUsable(now: Date())
+        return try await fetchUsage(accessToken: credentials.accessToken,
+                                    identity: CodexIdentity(planType: credentials.plan), source: .claudeCode)
+    }
+
+    public func fetchUsage(accessToken: String, identity: CodexIdentity,
+                           source: UsageSource = .claudeOAuth) async throws -> CodexUsageSnapshot {
+        try Task.checkCancellation()
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
-        request.setValue("Bearer \(credentials.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("OhMyLimit", forHTTPHeaderField: "User-Agent")
         let data: Data
@@ -101,13 +110,22 @@ public struct ClaudeClient: Sendable {
         default: throw ClaudeClientError.requestFailed
         }
         guard data.count <= 1_048_576 else { throw ClaudeClientError.invalidResponse }
-        return try ClaudeUsageParser.parse(data, plan: credentials.plan)
+        return try ClaudeUsageParser.parse(data, identity: identity, source: source)
     }
 
-    private struct Credentials {
+    struct Credentials {
         let accessToken: String
         let expiresAt: Double?
         let plan: String?
+        /// Whether Claude Code can still renew the access token. The refresh token
+        /// itself is never kept: this app must not use or rotate it.
+        let refreshable: Bool
+
+        func checkUsable(now: Date) throws {
+            let nowMillis = now.timeIntervalSince1970 * 1_000
+            guard let expiresAt, expiresAt <= nowMillis else { return }
+            throw refreshable ? ClaudeClientError.awaitingClaudeCodeRefresh : ClaudeClientError.expired
+        }
     }
 
     private static func credentials(home: URL, allowInteraction: Bool) throws -> Credentials {
@@ -148,14 +166,19 @@ public struct ClaudeClient: Sendable {
         return selected
     }
 
-    private static func decodeCredentials(_ data: Data) -> Credentials? {
+    static func decodeCredentials(_ data: Data, now: Date = Date()) -> Credentials? {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let oauth = root["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String, !token.isEmpty,
               token.utf8.count <= 16_384,
               token.unicodeScalars.allSatisfy({ (33...126).contains($0.value) }) else { return nil }
+        // Claude Code marks a dead refresh token with "" and records its own expiry.
+        let hasRefreshToken = (oauth["refreshToken"] as? String).map { !$0.isEmpty } ?? false
+        let refreshExpiry = (oauth["refreshTokenExpiresAt"] as? NSNumber)?.doubleValue
+        let refreshable = hasRefreshToken
+            && refreshExpiry.map { $0 > now.timeIntervalSince1970 * 1_000 } ?? true
         return Credentials(accessToken: token, expiresAt: (oauth["expiresAt"] as? NSNumber)?.doubleValue,
-                           plan: oauth["subscriptionType"] as? String)
+                           plan: oauth["subscriptionType"] as? String, refreshable: refreshable)
     }
 }
 
@@ -169,6 +192,10 @@ private final class ClaudeNoRedirect: NSObject, URLSessionTaskDelegate, @uncheck
 
 enum ClaudeUsageParser {
     static func parse(_ data: Data, plan: String? = nil) throws -> CodexUsageSnapshot {
+        try parse(data, identity: CodexIdentity(planType: plan), source: .claudeCode)
+    }
+
+    static func parse(_ data: Data, identity: CodexIdentity, source: UsageSource) throws -> CodexUsageSnapshot {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             throw ClaudeClientError.invalidResponse
         }
@@ -211,8 +238,7 @@ enum ClaudeUsageParser {
             else { windows.append(fallback) }
         }
         guard windows.contains(where: \.usageKnown) else { throw ClaudeClientError.invalidResponse }
-        return CodexUsageSnapshot(identity: CodexIdentity(planType: plan), windows: windows,
-                                  source: .claudeCode)
+        return CodexUsageSnapshot(identity: identity, windows: windows, source: source)
     }
 
     private static func window(id: String, label: String, duration: Int, percent: Any?, reset: Any?,

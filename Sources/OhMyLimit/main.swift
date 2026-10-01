@@ -249,7 +249,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private func login(_ id: UUID) {
         selection.select(id)
         if let profile = monitor?.accounts.first(where: { $0.id == id })?.profile,
-           profile.provider == .claude {
+           profile.provider == .claude && profile.authentication == .local {
             loginClaudeCode()
             return
         }
@@ -354,6 +354,11 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             },
             connectClaude: { [weak self] in self?.connectClaude() },
             loginClaude: { [weak self] in self?.loginClaudeCode() },
+            loginClaudeAccount: { [weak self] in
+                guard let self, let id = self.monitor?.createClaudeAccount() else { return }
+                self.login(id)
+                self.flow.showingSettings = false
+            },
             renameAccount: { [weak self] id, name in self?.monitor?.rename(id, to: name) },
             refreshAccount: { [weak self] id in self?.monitor?.refresh(id) },
             loginAccount: { [weak self] id in self?.login(id) },
@@ -400,9 +405,22 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
         }
         let content: AnyView
-        if scenario == "settings" || scenario == "settings-connected" {
+        if scenario == "settings" || scenario == "settings-connected" || scenario == "settings-claude" {
             let store = AccountStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
             previewDirectory = store.directory
+            if scenario == "settings-claude" {
+                do {
+                    try store.save([
+                        AccountProfile(name: "Claude", homePath: store.directory.path, isManaged: false,
+                                       provider: .claude, authentication: .oauth,
+                                       oauthIdentity: CodexIdentity(email: "claude@example.com", accountID: "preview"))
+                    ])
+                } catch {
+                    FileHandle.standardError.write(Data("Preview setup failed: \(error)\n".utf8))
+                    try? FileManager.default.removeItem(at: store.directory)
+                    exit(1)
+                }
+            }
             if scenario == "settings-connected" {
                 do {
                     try store.save([
@@ -424,9 +442,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             let settings = AnyView(SettingsView(
                 monitor: model, chooseExecutable: {}, connectCurrent: {}, chooseHome: { _ in }, addAccount: { _ in },
                 loginAntigravity: {}, connectAntigravity: {}, openAntigravity: {}, loginCodex: {},
-                connectClaude: {}, loginClaude: {},
+                connectClaude: {}, loginClaude: {}, loginClaudeAccount: {},
                 renameAccount: { _, _ in }, refreshAccount: { _ in }, loginAccount: { _ in },
-                cancelLogin: { _ in }, authorizeKeychain: { _ in }, disconnectAccount: { _ in }
+                cancelLogin: { _ in }, authorizeKeychain: { _ in }, disconnectAccount: { _ in },
+                initialProvider: scenario == "settings-claude" ? .claude : .codex
             ))
             let previewFlow = PopoverFlow()
             previewFlow.showingSettings = true

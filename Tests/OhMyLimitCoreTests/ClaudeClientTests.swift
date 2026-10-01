@@ -46,6 +46,23 @@ struct ClaudeClientTests {
         #expect(snapshot.windows[0].usageKnown)
     }
 
+    @Test func expiredAccessTokenWithLiveRefreshTokenIsNotALogout() throws {
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        func credentials(_ oauth: String) throws -> ClaudeClient.Credentials {
+            try #require(ClaudeClient.decodeCredentials(Data(#"{"claudeAiOauth":{"accessToken":"a",\#(oauth)}}"#.utf8), now: now))
+        }
+        let expired = #""expiresAt":1999000000"#
+        let waiting = try credentials(#"\#(expired),"refreshToken":"r","refreshTokenExpiresAt":2001000000"#)
+        #expect(throws: ClaudeClientError.awaitingClaudeCodeRefresh) { try waiting.checkUsable(now: now) }
+        let noExpiry = try credentials(#"\#(expired),"refreshToken":"r""#)
+        #expect(throws: ClaudeClientError.awaitingClaudeCodeRefresh) { try noExpiry.checkUsable(now: now) }
+        for dead in [#""refreshToken":"""#, #""refreshToken":"r","refreshTokenExpiresAt":1999000000"#, #""scopes":[]"#] {
+            let loggedOut = try credentials("\(expired),\(dead)")
+            #expect(throws: ClaudeClientError.expired) { try loggedOut.checkUsable(now: now) }
+        }
+        try credentials(#""expiresAt":2001000000"#).checkUsable(now: now)
+    }
+
     @Test func loginCommandRunsOfficialCLIAndCleansItselfUp() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

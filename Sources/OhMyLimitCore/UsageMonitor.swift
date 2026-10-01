@@ -56,6 +56,7 @@ public final class UsageMonitor: ObservableObject {
     private let fetchAntigravity: AntigravityFetch
     private let directAntigravity: AntigravityDirectClient
     private let directCodex: CodexDirectClient
+    private let directClaude: ClaudeDirectClient
     private let fetchClaude: ClaudeFetch
     private let clock: @Sendable () -> Date
     private var operations: [UUID: Task<Void, Never>] = [:]
@@ -88,6 +89,7 @@ public final class UsageMonitor: ObservableObject {
         fetchClaude: @escaping ClaudeFetch = { try await ClaudeClient().fetchUsage(home: $0, allowKeychainInteraction: $1) },
         directAntigravity: AntigravityDirectClient = AntigravityDirectClient(),
         directCodex: CodexDirectClient = CodexDirectClient(),
+        directClaude: ClaudeDirectClient = ClaudeDirectClient(),
         clock: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.store = store
@@ -97,6 +99,7 @@ public final class UsageMonitor: ObservableObject {
         self.fetchAntigravity = fetchAntigravity
         self.directAntigravity = directAntigravity
         self.directCodex = directCodex
+        self.directClaude = directClaude
         self.fetchClaude = fetchClaude
         self.clock = clock
         do {
@@ -177,7 +180,9 @@ public final class UsageMonitor: ObservableObject {
     @discardableResult
     public func connectClaude(home: URL) -> UUID? {
         guard configurationReadable, !isShuttingDown else { return nil }
-        if let existing = accounts.first(where: { $0.profile.provider == .claude }) { return existing.id }
+        if let existing = accounts.first(where: {
+            $0.profile.provider == .claude && $0.profile.authentication == .local
+        }) { return existing.id }
         do {
             let profile = try store.existingProfile(home: home, name: "Claude", provider: .claude)
             try store.save(accounts.map(\.profile) + [profile])
@@ -212,13 +217,23 @@ public final class UsageMonitor: ObservableObject {
     /// OAuth flow instead of a codex CLI home directory.
     @discardableResult
     public func createCodexAccount(name: String = "") -> UUID? {
+        createOAuthAccount(provider: .codex, name: name)
+    }
+
+    /// Registers a Claude account with the app's own claude.ai login, independent of Claude Code.
+    @discardableResult
+    public func createClaudeAccount(name: String = "") -> UUID? {
+        createOAuthAccount(provider: .claude, name: name)
+    }
+
+    private func createOAuthAccount(provider: AccountProvider, name: String) -> UUID? {
         guard configurationReadable, !isShuttingDown else { return nil }
         do {
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
             let profile = AccountProfile(
-                name: trimmed.isEmpty ? "Codex" : trimmed,
+                name: trimmed.isEmpty ? provider.displayName : trimmed,
                 homePath: store.directory.path, isManaged: false,
-                provider: .codex, authentication: .oauth
+                provider: provider, authentication: .oauth
             )
             try store.save(accounts.map(\.profile) + [profile])
             accounts.append(AccountState(profile: profile))
@@ -259,7 +274,7 @@ public final class UsageMonitor: ObservableObject {
             let generation = UUID()
             generations[id] = generation
             update(id) { $0.isRefreshing = true }
-            let task = Task { [weak self, directAntigravity, directCodex] in
+            let task = Task { [weak self, directAntigravity, directCodex, directClaude] in
                 defer {
                     self?.disconnecting.remove(id)
                     self?.finish(id, generation: generation)
@@ -272,7 +287,7 @@ public final class UsageMonitor: ObservableObject {
                     case .codex:
                         try await directCodex.disconnect(profileID: id)
                     case .claude:
-                        break // Claude accounts only reference Claude Code's local login.
+                        try await directClaude.disconnect(profileID: id)
                     }
                     guard let self else { return }
                     try self.store.save(self.accounts.filter { $0.id != id }.map(\.profile))
@@ -412,8 +427,16 @@ public final class UsageMonitor: ObservableObject {
                 fetchUsage = fetchAntigravity
             }
         case .claude:
-            fetchUsage = { [fetchClaude, home = state.profile.homeURL] in
-                try await fetchClaude(home, allowKeychainInteraction)
+            if state.profile.authentication == .oauth {
+                fetchUsage = { [directClaude] in
+                    try await directClaude.fetchUsage(
+                        profile: state.profile, allowKeychainInteraction: allowKeychainInteraction
+                    )
+                }
+            } else {
+                fetchUsage = { [fetchClaude, home = state.profile.homeURL] in
+                    try await fetchClaude(home, allowKeychainInteraction)
+                }
             }
         }
         let pending = draining.values.filter { $0.id == id }.map(\.task)
@@ -441,6 +464,7 @@ public final class UsageMonitor: ObservableObject {
                     $0.error = error.localizedDescription
                     $0.needsKeychainAccess = (error as? CodexOAuthError)?.needsKeychainAccess == true
                         || (error as? AntigravityOAuthError)?.needsKeychainAccess == true
+                        || (error as? ClaudeOAuthError)?.needsKeychainAccess == true
                         || (error as? ClaudeClientError).map { if case .keychainUnavailable = $0 { true } else { false } } == true
                 }
                 let count = min((self.failures[id] ?? 0) + 1, 5)
@@ -460,7 +484,7 @@ public final class UsageMonitor: ObservableObject {
             notice = "Antigravity 앱 또는 agy에서 로그인한 뒤 새로고침해 주세요."
             return nil
         }
-        if state.profile.provider == .claude {
+        if state.profile.provider == .claude && state.profile.authentication == .local {
             notice = "Claude Code에서 로그인한 뒤 새로고침해 주세요."
             return nil
         }
@@ -491,7 +515,7 @@ public final class UsageMonitor: ObservableObject {
             $0.snapshot = nil
         }
         invalidateCache(id)
-        let task = Task { [weak self, authenticate, fetch, directAntigravity, directCodex, executableURL] in
+        let task = Task { [weak self, authenticate, fetch, directAntigravity, directCodex, directClaude, executableURL] in
             defer { self?.finish(id, generation: generation) }
             do {
                 for task in pending { await task.value }
@@ -506,7 +530,7 @@ public final class UsageMonitor: ObservableObject {
                     case .codex:
                         identity = try await directCodex.login(profileID: id, onURL: onURL)
                     case .claude:
-                        return
+                        identity = try await directClaude.login(profileID: id, onURL: onURL)
                     }
                     guard !Task.isCancelled, let self, self.generations[id] == generation else { return }
                     profile.oauthIdentity = identity
@@ -522,7 +546,7 @@ public final class UsageMonitor: ObservableObject {
                     case .codex:
                         snapshot = try await directCodex.fetchUsage(profile: profile)
                     case .claude:
-                        return
+                        snapshot = try await directClaude.fetchUsage(profile: profile)
                     }
                 } else {
                     guard let executableURL else { return }
@@ -545,6 +569,7 @@ public final class UsageMonitor: ObservableObject {
                     $0.error = error.localizedDescription
                     $0.needsKeychainAccess = (error as? CodexOAuthError)?.needsKeychainAccess == true
                         || (error as? AntigravityOAuthError)?.needsKeychainAccess == true
+                        || (error as? ClaudeOAuthError)?.needsKeychainAccess == true
                 }
             }
         }

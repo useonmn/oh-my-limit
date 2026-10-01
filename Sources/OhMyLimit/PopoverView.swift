@@ -41,7 +41,8 @@ struct AccountCard: View {
                 Spacer(minLength: Theme.compact)
                 Menu {
                     Button("새로고침", action: refresh).disabled(state.isRefreshing || state.isLoggingIn)
-                    Button(state.profile.provider == .claude ? "Claude Code에서 로그인" :
+                    Button(state.profile.provider == .claude && state.profile.authentication == .local
+                           ? "Claude Code에서 로그인" :
                            state.profile.provider == .antigravity && state.profile.authentication == .local
                            ? "Antigravity 열기" : "다시 로그인", action: login)
                         .disabled(state.isLoggingIn)
@@ -149,7 +150,7 @@ struct AccountCard: View {
     }
     private var accountDescription: String {
         switch state.profile.provider {
-        case .claude: "Claude Code 로컬 계정"
+        case .claude: state.profile.authentication == .oauth ? "Claude 직접 로그인" : "Claude Code 로컬 계정"
         case .antigravity: state.profile.authentication == .oauth ? "Google 직접 로그인" : "Antigravity 로컬 계정"
         case .codex: state.profile.authentication == .oauth ? "ChatGPT 직접 로그인"
             : state.profile.isManaged ? "별도 로그인 계정" : "기존 Codex 계정"
@@ -158,7 +159,7 @@ struct AccountCard: View {
 
     private var loginLabel: String {
         switch state.profile.provider {
-        case .claude: "Claude Code에서 로그인"
+        case .claude: state.profile.authentication == .oauth ? "Claude 로그인" : "Claude Code에서 로그인"
         case .antigravity: state.profile.authentication == .oauth ? "Google 로그인" : "Antigravity 열기 / 설치"
         case .codex: state.profile.authentication == .oauth ? "ChatGPT 로그인" : "Codex 로그인"
         }

@@ -6,7 +6,7 @@ OUTPUT="${1:-"$ROOT/.omo/evidence"}"
 mkdir -p "$OUTPUT"
 xcrun swift build
 BIN="$(xcrun swift build --show-bin-path)"
-for ENTRY in normal:2 empty:1 missing-cli:1 error:2 loading:2 long:2 models:1 settings:1 settings-connected:1 claude:1 antigravity:1 antigravity-cli:1 antigravity-unknown:1 antigravity-error:1 antigravity-loading:1 antigravity-stale:1 mixed:3 antigravity-oauth:1 antigravity-oauth-login:1 antigravity-oauth-denied:1 antigravity-oauth-multiple:2 ring-boundaries:5 many-windows:1 codex-reserve:1 keychain-antigravity:1 keychain-codex:1 keychain-cached:1; do
+for ENTRY in normal:2 empty:1 missing-cli:1 error:2 loading:2 long:2 models:1 settings:1 settings-connected:1 settings-claude:1 claude:1 claude-oauth:1 antigravity:1 antigravity-cli:1 antigravity-unknown:1 antigravity-error:1 antigravity-loading:1 antigravity-stale:1 mixed:3 antigravity-oauth:1 antigravity-oauth-login:1 antigravity-oauth-denied:1 antigravity-oauth-multiple:2 ring-boundaries:5 many-windows:1 codex-reserve:1 keychain-antigravity:1 keychain-codex:1 keychain-cached:1; do
     SCENARIO="${ENTRY%:*}"
     COUNT="${ENTRY##*:}"
     for ((INDEX=0; INDEX<COUNT; INDEX++)); do

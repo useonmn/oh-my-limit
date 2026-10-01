@@ -63,6 +63,7 @@ public enum UsageSource: String, Codable, Sendable {
     case antigravityOAuth
     case codexOAuth
     case claudeCode
+    case claudeOAuth
 }
 
 public struct CodexUsageSnapshot: Codable, Sendable, Equatable {

@@ -161,6 +161,17 @@ enum PreviewFixtures {
                 CodexQuotaWindow(id: "claude.model.Opus", label: "주간 · Opus", usedPercent: 75,
                     windowDurationMins: 10_080, resetsAt: now.addingTimeInterval(260_000))
             ], fetchedAt: now, source: .claudeCode))]
+        case "claude-oauth":
+            let identity = CodexIdentity(email: "claude@example.com", accountID: "preview")
+            states = [AccountState(profile: AccountProfile(
+                name: "Claude", homePath: "/preview/oauth", isManaged: false,
+                provider: .claude, authentication: .oauth, oauthIdentity: identity
+            ), snapshot: CodexUsageSnapshot(identity: identity, windows: [
+                CodexQuotaWindow(id: "claude.session", label: "5시간", usedPercent: 12,
+                    windowDurationMins: 300, resetsAt: now.addingTimeInterval(9_000)),
+                CodexQuotaWindow(id: "claude.weekly", label: "주간", usedPercent: 41,
+                    windowDurationMins: 10_080, resetsAt: now.addingTimeInterval(300_000))
+            ], fetchedAt: now, source: .claudeOAuth))]
         case "mixed":
             states.append(AccountState(profile: antigravity, snapshot: antigravitySnapshot))
         case "error":

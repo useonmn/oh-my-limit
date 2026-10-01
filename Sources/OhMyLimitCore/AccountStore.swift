@@ -135,8 +135,7 @@ public struct AccountStore: Sendable {
         guard profiles.filter({ $0.provider == .claude && $0.authentication == .local }).count <= 1 else {
             throw AccountStoreError.duplicateLocalProvider
         }
-        guard profiles.allSatisfy({ $0.provider != .claude || $0.authentication == .local }) &&
-              profiles.allSatisfy({ $0.authentication != .oauth || !$0.isManaged }) else {
+        guard profiles.allSatisfy({ $0.authentication != .oauth || !$0.isManaged }) else {
             throw AccountStoreError.unreadableConfiguration
         }
         guard profiles.allSatisfy({ $0.homePath.hasPrefix("/") && !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
