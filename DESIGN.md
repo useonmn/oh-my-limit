@@ -119,22 +119,20 @@ windows, stale data, login waiting, and errors in both appearances.
   It requests access to the selected account's saved credentials without
   browser login. Disable it during refresh/login; explain the macOS
   "항상 허용" choice without promising access after Keychain resets or locks.
-- `EmptyState`: brief explanation and real existing-account/login actions. Missing
-  CLI replaces the connection action with setup, rather than stacking disabled controls.
+- `EmptyState`: brief explanation and one real connection action that opens settings.
 - `SettingsView`: show a compact connected-account list followed by one
   provider's connection actions, chosen with a segmented control. Do not stack
-  every service's setup instructions in the same viewport. Direct login is
-  primary for Codex and Antigravity; secondary CLI/local actions are disclosed.
-  Claude shows its two-step external login only while disconnected. Each
-  account retains alias, refresh, reconnect, cancel and disconnect actions.
-  Local directory selection does not copy credentials. Direct accounts are
-  independent; only local accounts follow external login. CLI reports without
-  an email never inherit the previous local identity.
+  every service's setup instructions in the same viewport. Codex and Claude
+  offer only the browser login. Antigravity's direct login is primary; its
+  secondary local app/CLI action is disclosed. Each account retains alias,
+  refresh, reconnect, cancel and disconnect actions. Direct accounts are
+  independent; only the local Antigravity account follows external login. CLI
+  reports without an email never inherit the previous local identity.
 - `Header`: small app title, visibly labeled preview data when applicable, connected
   "사용률" context so percentages are not mistaken for remaining allowance,
   refresh/add controls, and a settings menu containing settings and quit. Refresh
   retains its disabled/loading state and Command-R; quit retains Command-Q.
-- Account login, login cancellation, and missing-CLI recovery use the adaptive
+- Account login and login cancellation use the adaptive
   macOS link color so they remain distinct from disabled metadata in both appearances.
 
 ## 6. Motion & Interaction

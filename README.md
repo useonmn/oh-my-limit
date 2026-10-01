@@ -20,9 +20,8 @@ open /Applications/OhMyLimit.app
 
 `xcode-select --install`은 이미 Command Line Tools가 설치되어 있으면 생략합니다.
 Git에는 개인 계정 정보나 인증 토큰을 저장하지 않습니다. 따라서 새 Mac에서는
-앱을 처음 열고 Codex와 Antigravity 계정을 다시 연결해야 합니다. Claude는 해당 Mac에서
-Claude Code에 로그인한 뒤 앱 설정에서 연결합니다. 기존 Mac의 키체인,
-`~/Library/Application Support/OhMyLimit/`, Codex·Claude 홈 폴더는 저장소에 포함되지 않습니다.
+앱을 처음 열고 Codex, Claude, Antigravity 계정을 브라우저 로그인으로 다시 연결해야 합니다.
+기존 Mac의 키체인과 `~/Library/Application Support/OhMyLimit/`는 저장소에 포함되지 않습니다.
 
 ## 실행
 
@@ -30,9 +29,8 @@ Claude Code에 로그인한 뒤 앱 설정에서 연결합니다. 기존 Mac의 
 
 - macOS 14 이상
 - 소스에서 직접 빌드할 때만 Swift 6 이상이 포함된 Xcode 또는 Command Line Tools
-- Codex 직접 연결: ChatGPT 계정과 브라우저 (CLI 설치 불필요)
-- Codex 로컬 연결: 로그인된 공식 Codex CLI
-- Claude 로컬 연결: 로그인된 공식 Claude Code (`claude auth login`)
+- Codex: ChatGPT 계정과 브라우저 (Codex CLI 불필요)
+- Claude: Claude 계정과 브라우저 (Claude Code 불필요)
 - Antigravity 직접 연결: Google 계정과 브라우저 (앱·CLI 설치 불필요)
 - Antigravity 로컬 연결: 로그인된 Antigravity 앱/IDE 또는 공식 `agy` CLI 1.1.11 이상
 
@@ -76,29 +74,25 @@ Mac용이며, 현재 로컬 서명은 Apple 공증을 받지 않았으므로 다
 - 새로고침은 상단, 다시 로그인·연결 해제는 선택한 계정의 **…** 메뉴에 있습니다.
 - 패널은 참고 이미지에 맞춰 항상 어둡게 표시하며 설정 창은 시스템 테마를 따릅니다.
 
-## Codex 계정 두 개 연결하기
+## Codex 연결하기
 
-1. **설정 → 계정 추가 → Codex → Codex CLI로 연결 → 현재 Codex 계정 연결**을
-   누르면 현재 `CODEX_HOME` 또는 `~/.codex`를 연결합니다. 로그인 파일을 복사하지 않습니다.
-2. 같은 옵션에서 계정 이름을 입력하고 **별도 계정으로 로그인**을 누릅니다.
-   메뉴바 패널의 **+**를 눌러 설정을 열 수도 있습니다.
-3. 공식 로그인 페이지에서 두 번째 계정으로 로그인합니다. 브라우저가 첫 번째
-   계정으로 자동 로그인되어 있다면 원하는 계정을 직접 선택해 주세요.
-4. 각 계정의 사용률과 초기화 시각을 별도로 확인합니다.
+1. **설정 → 계정 추가 → Codex → ChatGPT 계정 연결**을 누릅니다.
+   메뉴바 패널의 **계정 연결…**을 눌러 설정을 열 수도 있습니다.
+2. 브라우저에서 연결할 ChatGPT 계정으로 로그인합니다. 브라우저가 다른 계정으로
+   자동 로그인되어 있다면 원하는 계정을 직접 선택해 주세요.
+3. 두 번째 계정도 같은 버튼으로 추가합니다. 계정마다 사용률과 초기화 시각을 별도로 표시합니다.
 
-기존에 계정마다 Codex 홈 폴더를 나눠 사용하고 있다면 같은 CLI 연결 옵션의
-**기존 Codex 폴더 선택…**으로 각각 연결할 수 있습니다.
-
-**연결 해제**는 앱의 계정 목록만 변경합니다. Codex 인증 파일을 삭제하거나
-기존 터미널을 로그아웃시키지 않습니다. 기존 폴더의 **다시 로그인**은 그 폴더의
-Codex 인증을 갱신하므로, 기존 터미널 계정과 분리하려면 새 계정을 추가하세요.
+Codex CLI나 `~/.codex` 폴더는 사용하지 않습니다. 앱은 사용량 조회에 필요한
+`openid profile email offline_access` 권한만 요청합니다.
+**연결 해제**는 해당 계정의 앱 내 인증정보와 캐시를 삭제하며 Codex CLI나 다른 앱의
+로그인은 변경하지 않습니다.
 
 ## Antigravity 연결하기
 
 1. **설정 → 계정 추가 → Antigravity → Google 계정 연결**을 누릅니다.
 2. 브라우저에서 연결할 계정을 선택하고 인증을 완료합니다.
 3. 계정별 사용량을 확인합니다. 다른 계정도 같은 버튼으로 추가할 수 있습니다.
-   Antigravity 앱·CLI와 Codex CLI는 필요하지 않습니다.
+   Antigravity 앱·CLI는 필요하지 않습니다.
 
 직접 연결은 계정별로 인증정보를 macOS 로그인 키체인에 보관하고 만료 시 갱신합니다.
 로그인 성공과 한도 조회 권한은 별개입니다. 인증 후 한도가 제공되지 않으면
@@ -125,18 +119,14 @@ agy -p "/usage" --output-format json --print-timeout 90s
 
 ## Claude 연결하기
 
-1. 앱 **설정 → 계정 추가 → Claude → 1. Claude Code로 로그인…**을 누릅니다. Terminal에서 공식
-   `claude auth login --claudeai`가 실행되고 브라우저에서 인증을 완료합니다.
-2. **2. 로그인된 계정 연결**을 누릅니다. 이미 Claude Code에 로그인했다면 1번은 생략합니다.
-3. macOS 키체인 접근 요청이 표시되면 앱에서 **키체인 접근 허용**을 누르고 허용합니다.
-   로그인 완료 후 연결된 계정은 새로고침해 사용량을 확인할 수 있습니다.
+1. **설정 → 계정 추가 → Claude → Claude 계정 연결**을 누릅니다.
+2. 브라우저에서 Claude 계정으로 로그인하고 사용량 읽기 권한(`user:profile`)을 허용합니다.
+3. 다른 계정도 같은 버튼으로 추가할 수 있습니다.
 
-Claude Code의 로컬 로그인 하나를 따라갑니다. 5시간·주간·모델별 주간 한도가
-제공되면 표시하며 메뉴바 요약에는 전체 주간 한도를 우선 사용합니다.
-앱은 Claude Code 키체인 또는 `~/.claude/.credentials.json`을 읽기만 하고
-토큰을 복사하거나 갱신하지 않습니다. 로그인이 만료되면 Claude Code에서 다시
-로그인한 뒤 앱을 새로고침하세요. 계정 메뉴에서도 공식 Claude Code 로그인을 다시 시작할 수 있습니다.
-**연결 해제**는 Claude Code를 로그아웃하지 않습니다.
+5시간·주간·모델별 주간 한도가 제공되면 표시하며 메뉴바 요약에는 전체 주간 한도를
+우선 사용합니다. Claude Code는 필요하지 않으며 Claude Code의 키체인 항목이나
+`~/.claude` 파일을 읽지 않습니다. 앱은 자체 갱신 토큰으로 로그인을 유지합니다.
+**연결 해제**는 해당 계정의 앱 내 인증정보만 삭제하며 Claude Code를 로그아웃하지 않습니다.
 Claude API 키·Bedrock·Vertex 연결은 이 Claude 구독 사용량 연결에 포함되지 않습니다.
 
 ## 표시와 갱신
@@ -163,8 +153,9 @@ Claude API 키·Bedrock·Vertex 연결은 이 Claude 구독 사용량 연결에 
 
 ## 인증과 데이터
 
-Codex는 `codex app-server`의 `account/read`, `account/rateLimits/read`와
-공식 로그인 RPC를 사용합니다. 추론 요청이나 에이전트 작업을 실행하지 않습니다.
+Codex는 PKCE 브라우저 로그인(`auth.openai.com`) 후 ChatGPT 사용량 API만 조회합니다.
+Claude는 PKCE 브라우저 로그인 후 Anthropic 사용량 API만 조회합니다.
+추론 요청이나 에이전트 작업을 실행하지 않습니다.
 Antigravity 직접 연결은 PKCE와 무작위 state를 검증하는 루프백 OAuth 콜백을
 사용합니다. 계정 정보는 `cloudcode-pa.googleapis.com`, 한도는
 `daily-cloudcode-pa.googleapis.com`에서 조회합니다. OpenCodex 2.55.0과 같은
@@ -180,19 +171,17 @@ Antigravity IDE 클라이언트 계약을 사용하며 리다이렉트와 공유
 ```text
 ~/Library/Application Support/OhMyLimit/
   accounts.json
-  profiles/<account UUID>/       # 앱에서 새로 로그인한 계정의 CODEX_HOME
   snapshots/<account UUID>.json  # 계정별 마지막 사용량
 ```
 
 직접 연결의 OAuth 액세스/갱신 토큰은 앱 전용 키체인 서비스
-(`local.ohmylimit.antigravity.oauth`, `local.ohmylimit.codex.oauth`)에 계정별로 저장합니다.
-토큰은 설정·캐시 파일이나 로그에 기록하지 않습니다. Claude 로컬 연결에 한해
-Claude Code가 관리하는 키체인 항목이나 로그인 파일을 읽기 전용으로 조회합니다.
+(`local.ohmylimit.antigravity.oauth`, `local.ohmylimit.codex.oauth`, `local.ohmylimit.claude.oauth`)에
+계정별로 저장합니다. 토큰은 설정·캐시 파일이나 로그에 기록하지 않습니다.
 Antigravity 로컬 통신에 필요한 프로세스 CSRF 값만 메모리에서 사용합니다.
-**Codex CLI가** 각 홈의 로그인과 인증 갱신을 담당하며 새 로그인에는 별도 홈을 사용합니다.
 설정과 캐시는 사용자 전용 권한으로 저장하며 캐시에 계정 이메일이 포함될 수 있습니다.
-기존 버전 1·2 설정은 기존 로컬 연결로 복원합니다. 저장할 때는 인증 방식이
-포함된 버전 3을 사용합니다. 캐시는 계정 UUID·경로·제공자·인증 방식이 일치할 때만
+예전 버전에서 Codex CLI 또는 Claude Code로 연결한 계정은 앱을 열 때 목록에서 제거하고
+안내를 표시합니다. 이때 CLI의 로그인 파일은 삭제하거나 변경하지 않으며, 브라우저 로그인으로
+다시 연결하면 됩니다. 저장할 때는 인증 방식이 포함된 버전 3을 사용합니다. 캐시는 계정 UUID·경로·제공자·인증 방식이 일치할 때만
 복원하며, 직접 연결은 인증한 Google 계정 ID도 대조합니다.
 
 ## 개발과 검증
@@ -202,20 +191,17 @@ Antigravity 로컬 통신에 필요한 프로세스 CSRF 값만 메모리에서 
 xcrun swift build
 ```
 
-설치된 Codex의 현재 계정으로 실제 RPC 조회를 확인할 수 있습니다. 출력에는
+로컬 Antigravity 계정으로 실제 조회를 확인할 수 있습니다. 출력에는
 이메일이나 토큰이 포함되지 않습니다.
 
 ```sh
 BIN="$(xcrun swift build --show-bin-path)"
-"$BIN/OhMyLimit" --probe
-"$BIN/OhMyLimit" --probe --codex-home "/path/to/codex-home"
 "$BIN/OhMyLimit" --probe-antigravity
 "$BIN/OhMyLimit" --probe-antigravity --antigravity-cli "/path/to/agy"
 ```
 
-테스트는 실제 파이프를 쓰는 가짜 Codex 프로세스로 프로토콜, 타임아웃,
-취소, 프로세스 종료, 로그인 완료 이벤트를 검증합니다. 추가 테스트는 계정
-분리, 저장/복원, 중복 요청, 오래된 응답 폐기, 실패 시 마지막 값 유지를 확인합니다.
+테스트는 계정 분리, 저장/복원, 예전 연결 방식 계정 정리, 중복 요청, 오래된 응답 폐기,
+실패 시 마지막 값 유지를 확인합니다.
 테스트는 실제 계정이나 인증 토큰을 사용하지 않습니다.
 Antigravity 테스트는 실제 루프백 HTTP 서버와 가짜 CLI 실행 파일로 파싱,
 계정 식별, 로컬 우선순위, CLI 버전 검사, 출력 제한, 취소와 정리를 검증합니다.
@@ -253,7 +239,7 @@ bash scripts/capture-previews.sh
 
 ## 구성
 
-- `Sources/OhMyLimitCore`: RPC, 계정 저장, 조회 상태와 캐시
+- `Sources/OhMyLimitCore`: OAuth 로그인, 사용량 조회, 계정 저장, 조회 상태와 캐시
 - `Sources/OhMyLimit`: 메뉴바, 팝오버, 설정, 화면 미리보기
 - `Tests/OhMyLimitCoreTests`: 프로토콜과 계정/상태 회귀 테스트
 - `DESIGN.md`: 화면과 접근성 기준
