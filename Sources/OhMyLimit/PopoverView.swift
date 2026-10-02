@@ -12,10 +12,10 @@ struct AccountCard: View {
     let disconnect: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.padding) {
+        VStack(alignment: .leading, spacing: Theme.gap) {
             HStack(alignment: .top) {
                 ProviderMark(provider: state.profile.provider)
-                    .frame(width: 18, height: 18).padding(6)
+                    .frame(width: 16, height: 16).padding(5)
                     .padding(.top, Theme.small)
                 VStack(alignment: .leading, spacing: Theme.small) {
                     Text(state.profile.name).font(Theme.panelAccount).lineLimit(1)
@@ -48,7 +48,7 @@ struct AccountCard: View {
                     Button("연결 해제", action: disconnect)
                 } label: {
                     Image(systemName: "ellipsis")
-                        .frame(width: 26, height: 26)
+                        .frame(width: 24, height: 24)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -209,7 +209,7 @@ struct PopoverView: View {
         let view = PopoverView(accounts: accounts, notice: notice, now: now,
                                preview: preview, selectedID: selectedID)
         let host = NSHostingView(rootView: view.naturalLayout)
-        return min(620, max(192, ceil(host.fittingSize.height)))
+        return min(620, max(160, ceil(host.fittingSize.height)))
     }
 
     private var naturalLayout: some View {
@@ -250,7 +250,7 @@ struct PopoverView: View {
             if !accounts.isEmpty {
                 Button(action: actions.refreshAll) {
                     Image(systemName: "arrow.clockwise")
-                        .frame(width: 28, height: 28)
+                        .frame(width: 26, height: 26)
                 }
                 .buttonStyle(.borderless)
                 .keyboardShortcut("r")
@@ -264,7 +264,7 @@ struct PopoverView: View {
                 Button("종료", action: actions.quit).keyboardShortcut("q")
             } label: {
                 Image(systemName: "gearshape")
-                    .frame(width: 28, height: 28)
+                    .frame(width: 26, height: 26)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -276,7 +276,7 @@ struct PopoverView: View {
         .font(Theme.panelBody)
         .foregroundStyle(Theme.panelSecondary)
         .padding(.horizontal, Theme.panelInset)
-        .frame(height: 44)
+        .frame(height: 40)
     }
 
     private var accountSelector: some View {
@@ -336,7 +336,7 @@ struct PopoverView: View {
                 if let id { proxy.scrollTo(id, anchor: .center) }
             }
         }
-        .frame(height: accounts.count > 3 ? 188 : 172)
+        .frame(height: accounts.count > 3 ? 166 : 150)
     }
 
     private func content(scrolling: Bool) -> some View {
@@ -422,7 +422,7 @@ struct LivePopover: View {
                     HStack(spacing: Theme.small) {
                         Button(action: { flow.showingSettings = false }) {
                             Image(systemName: "chevron.left")
-                                .frame(width: 28, height: 28)
+                                .frame(width: 26, height: 26)
                         }
                         .accessibilityLabel("뒤로")
                         Text("설정").font(Theme.panelTitle)
@@ -432,7 +432,7 @@ struct LivePopover: View {
                     .font(Theme.panelBody)
                     .foregroundStyle(Theme.panelSecondary)
                     .padding(.horizontal, Theme.panelInset)
-                    .frame(height: 44)
+                    .frame(height: 40)
                     settingsView
                 }
                 .foregroundStyle(Theme.panelPrimary)
@@ -492,7 +492,7 @@ private struct AccountRing: View {
                             .rotationEffect(.degrees(-90))
                     }
                     ProviderMark(provider: state.profile.provider)
-                        .frame(width: 28, height: 28)
+                        .frame(width: 22, height: 22)
                         .opacity(window == nil ? 0.55 : 1)
                 }
                 .frame(width: Theme.ringSize, height: Theme.ringSize)

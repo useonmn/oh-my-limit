@@ -2,19 +2,20 @@ import AppKit
 import SwiftUI
 
 enum Theme {
-    static let width: CGFloat = 380
+    static let width: CGFloat = 320
     static func settingsHeight(accountCount: Int) -> CGFloat {
         min(420, 280 + CGFloat(accountCount) * 35)
     }
-    static let panelInset: CGFloat = 20
+    static let panelInset: CGFloat = 16
+    static let panelRadius: CGFloat = 20
     static let panelTitle = Font.system(size: 12, weight: .semibold)
-    static let panelAccount = Font.system(size: 15, weight: .semibold)
+    static let panelAccount = Font.system(size: 13, weight: .semibold)
     static let panelBody = Font.system(size: 12)
-    static let ringValue = Font.system(size: 24, weight: .semibold).monospacedDigit()
+    static let ringValue = Font.system(size: 20, weight: .semibold).monospacedDigit()
     static let ringLabel = Font.system(size: 11, weight: .medium)
-    static let ringSize: CGFloat = 72
-    static let ringStroke: CGFloat = 7
-    static let accountButtonWidth: CGFloat = 104
+    static let ringSize: CGFloat = 56
+    static let ringStroke: CGFloat = 6
+    static let accountButtonWidth: CGFloat = 88
     static let panelSurface = Color(nsColor: .windowBackgroundColor)
     static let panelDetail = Color(nsColor: .controlBackgroundColor)
     static let panelSelected = Color.primary.opacity(0.10)
@@ -81,11 +82,11 @@ extension View {
     @ViewBuilder
     func menuSurface() -> some View {
         if #available(macOS 26.0, *) {
-            glassEffect(.regular, in: RoundedRectangle(cornerRadius: Theme.large, style: .continuous))
-                .clipShape(RoundedRectangle(cornerRadius: Theme.large, style: .continuous))
+            glassEffect(.regular, in: RoundedRectangle(cornerRadius: Theme.panelRadius, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.panelRadius, style: .continuous))
         } else {
             background(MenuMaterialView())
-                .clipShape(RoundedRectangle(cornerRadius: Theme.large, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Theme.panelRadius, style: .continuous))
         }
     }
 
