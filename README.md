@@ -41,9 +41,45 @@ open dist/OhMyLimit.app
 
 메뉴바의 계기판 아이콘을 클릭합니다. Dock에는 표시되지 않습니다.
 `dist/OhMyLimit.app`을 Applications 폴더로 복사해 사용할 수도 있습니다.
-현재 빌드는 로컬 ad-hoc 서명이며 Developer ID 공증 배포본은 아닙니다.
+`Oh My Limit Dev` 인증서가 있으면 그 인증서로, 없으면 ad-hoc으로 로컬 서명하며
+Developer ID 공증 배포본은 아닙니다.
 첫 정상 실행 때 사용자 LaunchAgent로 등록되며, 다음 macOS 로그인부터 자동 실행됩니다.
 자동 실행은 **시스템 설정 → 일반 → 로그인 항목 및 확장 프로그램**에서 끌 수 있습니다.
+
+## 키체인 접근을 유지하는 서명 인증서 만들기
+
+ad-hoc 서명은 빌드할 때마다 다른 앱으로 인식되어 실행할 때마다 키체인 접근을
+다시 묻습니다. 한 번 자체 서명 인증서 `Oh My Limit Dev`를 만들어 두면
+`build-app.sh`가 자동으로 사용하며, 이후 다시 빌드해도 키체인 허용이 유지됩니다.
+
+```sh
+T="$(mktemp -d)"; P="$(uuidgen)"
+cat > "$T/c.cnf" <<'EOF'
+[req]
+distinguished_name=dn
+prompt=no
+x509_extensions=ext
+[dn]
+CN=Oh My Limit Dev
+[ext]
+basicConstraints=critical,CA:false
+keyUsage=critical,digitalSignature
+extendedKeyUsage=critical,codeSigning
+EOF
+openssl req -x509 -newkey rsa:2048 -nodes -days 7300 -config "$T/c.cnf" \
+  -keyout "$T/k.pem" -out "$T/c.pem"
+openssl pkcs12 -export -inkey "$T/k.pem" -in "$T/c.pem" -name "Oh My Limit Dev" \
+  -out "$T/i.p12" -passout "pass:$P"
+security import "$T/i.p12" -k ~/Library/Keychains/login.keychain-db -P "$P" -T /usr/bin/codesign
+rm -rf "$T"
+```
+
+개인 키는 로그인 키체인에만 남고 임시 파일은 지워집니다. 저장소에 넣지 마세요.
+처음 서명할 때 `codesign`의 키 사용 허용 창이 뜨면 Mac 암호를 입력하고
+**항상 허용**을 누릅니다. `security find-identity -p codesigning`에 표시되는
+`CSSMERR_TP_NOT_TRUSTED`는 자체 서명 인증서에서 정상이며 서명에는 문제가 없습니다.
+이전 ad-hoc 앱이 만든 키체인 항목은 새 서명으로 처음 실행할 때 항목마다 한 번씩
+**항상 허용**을 눌러야 합니다.
 
 ## 개인용 DMG 만들기
 
