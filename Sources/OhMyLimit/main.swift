@@ -63,7 +63,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
                     self.selection.reconcile(accountIDs: states.map(\.id))
                     self.updateStatus(states)
                     self.setPanelContentSize(NSSize(
-                        width: Theme.width,
+                        width: showingSettings ? Theme.settingsWidth : Theme.width,
                         height: showingSettings ? Theme.settingsHeight(accountCount: states.count) : PopoverView.height(
                             for: states, notice: monitor.notice,
                             selectedID: self.selection.selectedID
@@ -217,10 +217,17 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
     private func setPanelContentSize(_ size: NSSize) {
         let top = panel.frame.maxY
+        let center = panel.frame.midX
         panel.setContentSize(size)
-        // Keep the top edge pinned so a visible panel grows downward.
+        // Keep the top edge pinned so a visible panel grows downward, and keep it
+        // centered because settings mode is wider than the usage popover.
         if panel.isVisible {
-            panel.setFrameTopLeftPoint(NSPoint(x: panel.frame.minX, y: top))
+            var x = center - panel.frame.width / 2
+            if let screen = panel.screen ?? NSScreen.main {
+                x = min(max(x, screen.visibleFrame.minX + 4),
+                        screen.visibleFrame.maxX - panel.frame.width - 4)
+            }
+            panel.setFrameTopLeftPoint(NSPoint(x: x, y: top))
         }
     }
 
@@ -352,7 +359,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             content = AnyView(LivePopover(
                 monitor: model, selection: AccountSelection(), flow: previewFlow,
                 actions: PopoverActions(), settingsView: settings
-            ).frame(width: Theme.width, height: Theme.settingsHeight(accountCount: model.accounts.count)))
+            ).frame(width: Theme.settingsWidth, height: Theme.settingsHeight(accountCount: model.accounts.count)))
         } else {
             let accounts = PreviewFixtures.accounts(scenario)
             let index = argument("--selected-account").flatMap(Int.init) ?? 0

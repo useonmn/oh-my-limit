@@ -115,7 +115,7 @@ struct SettingsView: View {
                 .buttonStyle(.bordered)
                 .padding(.top, Theme.compact)
             }
-            .font(Theme.panelBody)
+            .font(Theme.settingsBody)
         }
     }
 
@@ -159,7 +159,7 @@ private struct AccountSettingsRow: View {
                 } else {
                     VStack(alignment: .leading, spacing: Theme.small) {
                         HStack(spacing: Theme.compact) {
-                            Text(state.profile.name).font(Theme.panelBody.weight(.semibold))
+                            Text(state.profile.name).font(Theme.settingsBody.weight(.semibold))
                                 .lineLimit(1).help(state.profile.name)
                             Spacer(minLength: 0)
                             Text(status).font(Theme.caption)

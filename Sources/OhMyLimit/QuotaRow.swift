@@ -8,22 +8,22 @@ struct QuotaRow: View {
     private var awaitingReset: Bool { window.resetsAt.map { $0 <= now } ?? false }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.small) {
-            HStack(alignment: .top, spacing: Theme.compact) {
+        VStack(alignment: .leading, spacing: Theme.panelSmall) {
+            HStack(alignment: .top, spacing: Theme.panelCompact) {
                 Text([window.label, durationLabel == window.label ? nil : durationLabel]
                     .compactMap { $0 }.joined(separator: " · "))
                     .font(Theme.panelBody)
                     .lineLimit(1).help(window.label)
-                Spacer(minLength: Theme.compact)
+                Spacer(minLength: Theme.panelCompact)
                 Text(resetDescription)
-                    .font(Theme.caption).monospacedDigit()
+                    .font(Theme.panelCaption).monospacedDigit()
                     .foregroundStyle(awaitingReset ? Theme.panelWarning : Theme.panelSecondary)
                     .multilineTextAlignment(.trailing)
                     .fixedSize(horizontal: false, vertical: true)
                     .help(window.resetsAt?.formatted(date: .complete, time: .complete)
                           ?? window.resetDescription ?? "초기화 시각 미제공")
             }
-            .padding(.bottom, Theme.small)
+            .padding(.bottom, Theme.panelSmall)
             if window.usageKnown {
                 ProgressView(value: min(max(window.usedPercent, 0), 100), total: 100)
                     .progressViewStyle(QuotaProgressStyle(
@@ -36,18 +36,18 @@ struct QuotaRow: View {
                     .frame(height: Theme.barHeight).accessibilityHidden(true)
             }
             if window.usageKnown {
-                HStack(spacing: Theme.small) {
-                    Text("\(window.usedPercent, specifier: "%.0f")% 사용").font(Theme.value)
+                HStack(spacing: Theme.panelSmall) {
+                    Text("\(window.usedPercent, specifier: "%.0f")% 사용").font(Theme.panelValue)
                         .foregroundStyle(awaitingReset ? Theme.panelSecondary : Theme.panelPrimary)
                     if !awaitingReset {
                         Text("· \(max(0, 100 - window.usedPercent), specifier: "%.0f")% 남음")
-                            .font(Theme.caption).foregroundStyle(Theme.panelSecondary)
+                            .font(Theme.panelCaption).foregroundStyle(Theme.panelSecondary)
                     }
                 }
-                .padding(.top, Theme.small)
+                .padding(.top, Theme.panelSmall)
             } else {
-                Text("알 수 없음").font(Theme.caption).foregroundStyle(Theme.panelSecondary)
-                    .padding(.top, Theme.small)
+                Text("알 수 없음").font(Theme.panelCaption).foregroundStyle(Theme.panelSecondary)
+                    .padding(.top, Theme.panelSmall)
             }
         }
         .accessibilityElement(children: .combine)

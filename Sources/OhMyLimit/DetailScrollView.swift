@@ -27,12 +27,12 @@ struct DetailScrollView<Content: View>: NSViewRepresentable {
         scroll.hasHorizontalScroller = false
         scroll.scrollerStyle = .overlay
         scroll.scrollerInsets = NSEdgeInsets(
-            top: Theme.padding, left: 0, bottom: Theme.padding, right: Theme.small
+            top: Theme.panelPadding, left: 0, bottom: Theme.panelPadding, right: Theme.panelSmall
         )
         scroll.horizontalScrollElasticity = .none
         scroll.automaticallyAdjustsContentInsets = false
         scroll.wantsLayer = true
-        scroll.layer?.cornerRadius = Theme.radius
+        scroll.layer?.cornerRadius = Theme.panelGroupRadius
         scroll.layer?.masksToBounds = true
         scroll.documentView = NSHostingView(rootView: hostedContent)
         updateNSView(scroll, context: context)

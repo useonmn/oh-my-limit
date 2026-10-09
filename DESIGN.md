@@ -35,7 +35,7 @@ change primary-quota, stale or unknown-value rules.
 ## 2. Color
 
 The panel follows the system appearance over native Liquid Glass on macOS
-26 and later (`glassEffect(.regular)` with the 20 pt rounded panel shape).
+26 and later (`glassEffect(.regular)` with the 14 pt rounded panel shape).
 The September 21 references show wallpaper-responsive native menu surfaces;
 the legacy NSVisualEffectView `.menu` material is not an identical recipe.
 Keep that behind-window material only for supported macOS 14/15 systems.
@@ -54,42 +54,44 @@ Settings retain their adaptive system palette. No new theme toggle.
 
 ## 3. Typography
 
-System SF typography, with the system's Korean fallback. Panel roles: title 12 pt
-semibold, account 13 pt semibold, body 12 pt, caption 11 pt, detail value 13 pt
-semibold, ring percentage 20 pt semibold, ring account label 11 pt medium.
-Settings retain their existing type scale.
+System SF typography, with the system's Korean fallback. Panel roles: title 10 pt
+semibold, account 11 pt semibold, body 10 pt, caption 10 pt, detail value 10 pt
+semibold, ring percentage 14 pt semibold, ring account label 10 pt medium.
+The popover was scaled to 70% but text never goes below 10 pt.
+Settings retain their existing type scale (title and body 12 pt).
 Percentages and countdown numbers use monospaced digits. Utility controls use small system typography. Long account names truncate with a full accessibility
 label; errors wrap instead of clipping.
 
 ## 4. Spacing & Layout
 
 Base unit: 4 pt. Named steps: 4, 8, 12, 16, 20, 24.
-Popover width: 320 pt, close to native menu extras; horizontal inset 16 pt;
-outer radius 20 pt. A quiet 40 pt header provides refresh, add and settings.
-Below it, a horizontal row of 88 pt account buttons uses 56 pt rings with
-6 pt round-capped strokes, 22 pt provider marks, large percentages, account names and quota-window labels.
-Center up to three accounts in a 150 pt selector; additional accounts scroll
-horizontally in 166 pt to reserve space for native indicators. Selection has a
+The popover uses its own 70% scale: steps 3, 6, 8, 11 pt and an 8 pt group radius.
+Popover width: 224 pt; horizontal inset 11 pt;
+outer radius 14 pt. A quiet 28 pt header provides refresh, add and settings.
+Below it, a horizontal row of 62 pt account buttons uses 40 pt rings with
+4 pt round-capped strokes, 15 pt provider marks, large percentages, account names and quota-window labels.
+Center up to three accounts in a 120 pt selector; additional accounts scroll
+horizontally in 131 pt to reserve space for native indicators. Selection has a
 subtle selected fill and visible focus outline.
-Below the selector, a quiet 12 pt-radius group with 16 pt insets shows only
+Below the selector, a quiet 8 pt-radius group with 11 pt insets shows only
 the selected account: a faint fill and a hairline edge, no shadow or layered
-material. Its 288 pt outer width, rounded mask, and outer margins stay fixed
+material. Its 202 pt outer width, rounded mask, and outer margins stay fixed
 whether its content fits or overflows. Only the padded contents scroll; the
-group background and 16 pt bottom inset never scroll away.
+group background and 11 pt bottom inset never scroll away.
 Use a native overlay scrollbar inside the group so an appearing scrollbar
 does not consume content width or reflow text. Keep the indicator usable and
 inset from the rounded corners; do not change global macOS scroll preferences.
-The selector and header remain visible. Detail rows have 12 pt spacing and
-5 pt progress bars.
+The selector and header remain visible. Detail rows have 8 pt spacing and
+4 pt progress bars.
 Spatial model: [scroll-body-shell](https://github.com/changeroa/StyleGallery/blob/main/patterns/viewport-shell/scroll-body-shell.md),
 adapted to a bounded native card rather than a web page.
 Empty onboarding remains compact, with an existing-account button and service
 connection action. No disconnected refresh or permanent footer.
 Reset countdowns stay concise; complete local dates appear in tooltips.
 Measure the actual SwiftUI content, including errors and notices, and cap the
-height at 620 pt. Account selection and data changes must update native popover
+height at 434 pt. Account selection and data changes must update native popover
 sizing after published state commits. Keep `height(for:)` compatible by adding
-an optional selected ID. Settings use the 320 pt panel width and a compact
+an optional selected ID. Settings open in the same panel at 320 pt width with a compact
 account-count-dependent height capped at 420 pt; excess content scrolls.
 Buttons remain real keyboard-reachable SwiftUI controls; the primary action
 uses `.borderedProminent` with the system focus ring.
@@ -155,7 +157,7 @@ Borderless NSPanel backed by one native Liquid Glass surface on macOS 26+,
 with the legacy behind-window menu material on macOS 14/15.
 The OS owns refraction, blur and the outer edge; do not paint an imitation
 gradient or stack a second material beneath it. Clip the complete surface to
-the same 20 pt continuous rounded shape, including in the real borderless
+the same 14 pt continuous rounded shape, including in the real borderless
 panel, so the hosting view cannot leave square corner edges. Chrome stays
 flat: icon triggers are plain borderless symbols, grouped content sits in a
 faint fill with a hairline edge, and ring selection is a flat selected-content

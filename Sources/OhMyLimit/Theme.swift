@@ -2,20 +2,32 @@ import AppKit
 import SwiftUI
 
 enum Theme {
-    static let width: CGFloat = 320
+    /// Usage popover width. Settings open in the same panel at `settingsWidth`.
+    static let width: CGFloat = 224
+    static let settingsWidth: CGFloat = 320
     static func settingsHeight(accountCount: Int) -> CGFloat {
         min(420, 280 + CGFloat(accountCount) * 35)
     }
-    static let panelInset: CGFloat = 16
-    static let panelRadius: CGFloat = 20
-    static let panelTitle = Font.system(size: 12, weight: .semibold)
-    static let panelAccount = Font.system(size: 13, weight: .semibold)
-    static let panelBody = Font.system(size: 12)
-    static let ringValue = Font.system(size: 20, weight: .semibold).monospacedDigit()
-    static let ringLabel = Font.system(size: 11, weight: .medium)
-    static let ringSize: CGFloat = 56
-    static let ringStroke: CGFloat = 6
-    static let accountButtonWidth: CGFloat = 88
+    static let panelInset: CGFloat = 11
+    static let panelRadius: CGFloat = 14
+    static let panelHeader: CGFloat = 28
+    static let panelTitle = Font.system(size: 10, weight: .semibold)
+    static let panelAccount = Font.system(size: 11, weight: .semibold)
+    static let panelBody = Font.system(size: 10)
+    static let panelCaption = Font.system(size: 10)
+    static let panelValue = Font.system(size: 10, weight: .semibold).monospacedDigit()
+    static let ringValue = Font.system(size: 14, weight: .semibold).monospacedDigit()
+    static let ringLabel = Font.system(size: 10, weight: .medium)
+    static let ringSize: CGFloat = 40
+    static let ringStroke: CGFloat = 4
+    static let accountButtonWidth: CGFloat = 62
+    static let panelSmall: CGFloat = 3
+    static let panelCompact: CGFloat = 6
+    static let panelGap: CGFloat = 8
+    static let panelPadding: CGFloat = 11
+    static let panelGroupRadius: CGFloat = 8
+    static let settingsTitle = Font.system(size: 12, weight: .semibold)
+    static let settingsBody = Font.system(size: 12)
     static let panelSurface = Color(nsColor: .windowBackgroundColor)
     static let panelDetail = Color(nsColor: .controlBackgroundColor)
     static let panelSelected = Color.primary.opacity(0.10)
@@ -33,12 +45,11 @@ enum Theme {
     static let section: CGFloat = 20
     static let large: CGFloat = 24
     static let radius: CGFloat = 12
-    static let barHeight: CGFloat = 5
+    static let barHeight: CGFloat = 4
     static let title = Font.system(size: 18, weight: .semibold)
     static let account = Font.system(size: 14, weight: .semibold)
     static let body = Font.system(size: 13)
     static let caption = Font.system(size: 11)
-    static let value = Font.system(size: 13, weight: .semibold).monospacedDigit()
     static let panelGroup = Color.primary.opacity(0.055)
     static let warningText = Color(nsColor: NSColor(name: "UsageWarning") { appearance in
         if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
@@ -92,8 +103,8 @@ extension View {
 
     /// Quiet inset group on the menu surface: a faint fill and a hairline,
     /// like the grouped rows in Control Center panels.
-    func menuGroup() -> some View {
-        modifier(MenuGroup())
+    func menuGroup(radius: CGFloat = Theme.radius) -> some View {
+        modifier(MenuGroup(radius: radius))
     }
 
     /// Flat selection fill behind the selected account ring.
@@ -103,14 +114,16 @@ extension View {
 }
 
 private struct MenuGroup: ViewModifier {
+    let radius: CGFloat
+
     func body(content: Content) -> some View {
         content
             .background {
-                RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .fill(Theme.panelGroup)
             }
             .overlay {
-                RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .stroke(Theme.panelSeparator.opacity(0.6), lineWidth: 0.5)
             }
     }
@@ -122,7 +135,7 @@ private struct MenuSelection: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background {
-                RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
+                RoundedRectangle(cornerRadius: Theme.panelGroupRadius, style: .continuous)
                     .fill(selected ? Theme.panelSelected : .clear)
             }
     }
