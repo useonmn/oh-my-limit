@@ -205,7 +205,6 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         // already in screen coordinates, so offset the button rect manually.
         let inWindow = button.convert(button.bounds, to: nil)
         let buttonFrame = inWindow.offsetBy(dx: window.frame.origin.x, dy: window.frame.origin.y)
-        FileHandle.standardError.write("[dbg] winFrame=\(window.frame) inWindow=\(inWindow) buttonFrame=\(buttonFrame) panelSize=\(panel.frame.size)\n".data(using: .utf8)!)
         let size = panel.frame.size
         var x = buttonFrame.midX - size.width / 2
         if let screen = window.screen ?? NSScreen.main {
