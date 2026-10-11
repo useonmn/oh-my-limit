@@ -4,6 +4,72 @@ import Testing
 @testable import OhMyLimitCore
 
 @Suite struct AntigravityOAuthCallbackTests {
+    @Test(.timeLimit(.minutes(1))) func localhostGuardsIPv6AndServesCallbackOverIPv4() async throws {
+        let callback = try AntigravityOAuthCallback(state: "expected", timeout: 5, redirectHost: "localhost")
+        let urls = AsyncStream<URL>.makeStream()
+        let task = Task {
+            defer { urls.continuation.finish() }
+            return try await callback.wait { urls.continuation.yield($0) }
+        }
+        defer { task.cancel() }
+        var iterator = urls.stream.makeAsyncIterator()
+        let url = try #require(await iterator.next())
+        #expect(url.host == "localhost")
+        let squatter = socket(AF_INET6, SOCK_STREAM, 0)
+        defer { close(squatter) }
+        var address = sockaddr_in6()
+        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_addr = in6addr_loopback
+        address.sin6_port = UInt16(url.port!).bigEndian
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(squatter, $0, socklen_t(MemoryLayout<sockaddr_in6>.size))
+            }
+        }
+        #expect(bound == -1 && errno == EADDRINUSE)
+        let ipv4 = try await oauthRawRequest(url, fragments: ["GET /favicon.ico HTTP/1.1\r\n\r\n"])
+        #expect(ipv4.contains("404"))
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let target = URL(string: "\(url.absoluteString)?state=expected&code=localhost-code")!
+        var request = URLRequest(url: target)
+        request.timeoutInterval = 5
+        let (_, response) = try await session.data(for: request)
+        #expect((response as? HTTPURLResponse)?.statusCode == 200)
+        #expect(try await task.value == "localhost-code")
+        #expect(await callback.isClosed())
+    }
+
+    @Test func occupiedIPv6PortPreventsPublishingLocalhostRedirect() async throws {
+        let fd = socket(AF_INET6, SOCK_STREAM, 0)
+        #expect(fd >= 0)
+        defer { close(fd) }
+        var address = sockaddr_in6()
+        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_addr = in6addr_loopback
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in6>.size))
+            }
+        }
+        #expect(bound == 0)
+        #expect(listen(fd, 1) == 0)
+        var length = socklen_t(MemoryLayout<sockaddr_in6>.size)
+        let named = withUnsafeMutablePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
+        }
+        #expect(named == 0)
+        let port = UInt16(bigEndian: address.sin6_port)
+        let callback = try AntigravityOAuthCallback(state: "s", timeout: 5, ports: [port], redirectHost: "localhost")
+        await #expect(throws: AntigravityOAuthError.callbackUnavailable) {
+            try await callback.wait { _ in Issue.record("Must own both addresses before opening the browser") }
+        }
+        #expect(await callback.redirectURI() == nil)
+        #expect(await callback.isClosed())
+    }
+
     @Test func parserRequiresUnambiguousMatchingStateAndGET() {
         let state = "expected"
         func parse(_ target: String, method: String = "GET", extra: String = "") -> AntigravityOAuthCallback.ParsedRequest {

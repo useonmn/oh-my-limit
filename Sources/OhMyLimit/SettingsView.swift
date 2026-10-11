@@ -10,6 +10,7 @@ private final class AccountDraft: ObservableObject {
 
 struct SettingsView: View {
     @ObservedObject var monitor: UsageMonitor
+    @StateObject private var launchAtLogin = LaunchAtLoginController()
     let loginAntigravity: () -> Void
     let connectAntigravity: () -> Void
     let openAntigravity: () -> Void
@@ -32,11 +33,29 @@ struct SettingsView: View {
         }
         .foregroundStyle(Theme.panelPrimary)
         .tint(Theme.mint)
-        .onAppear { draft.selectedProvider = initialProvider }
+        .onAppear {
+            draft.selectedProvider = initialProvider
+            launchAtLogin.refreshStatus()
+        }
     }
 
     private var settingsContent: some View {
         VStack(alignment: .leading, spacing: Theme.gap) {
+            panelGroup {
+                Toggle("로그인 시 실행", isOn: Binding(
+                    get: { launchAtLogin.isEnabled },
+                    set: { launchAtLogin.setEnabled($0) }
+                ))
+                .font(Theme.settingsBody)
+                .disabled(!launchAtLogin.isAvailable)
+                if launchAtLogin.status == .requiresApproval {
+                    Text("시스템 설정의 로그인 항목에서 허용해 주세요.")
+                        .font(Theme.caption)
+                }
+                if let error = launchAtLogin.errorMessage {
+                    Text(error).font(Theme.caption).foregroundStyle(Theme.warningText)
+                }
+            }
             if let notice = monitor.notice {
                 Text(notice).font(Theme.body).foregroundStyle(Theme.warningText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -56,8 +75,16 @@ struct SettingsView: View {
                             onLogin: { loginAccount(state.id) },
                             onCancel: { cancelLogin(state.id) },
                             onAuthorizeKeychain: { authorizeKeychain(state.id) },
-                            onDisconnect: { disconnectAccount(state.id) }
+                            onDisconnect: { disconnectAccount(state.id) },
+                            onMoveLeft: monitor.accounts.first?.id == state.id ? nil : { move(state.id, offset: -1) },
+                            onMoveRight: monitor.accounts.last?.id == state.id ? nil : { move(state.id, offset: 1) }
                         )
+                        .contextMenu {
+                            Button("왼쪽으로 이동") { move(state.id, offset: -1) }
+                                .disabled(monitor.accounts.first?.id == state.id)
+                            Button("오른쪽으로 이동") { move(state.id, offset: 1) }
+                                .disabled(monitor.accounts.last?.id == state.id)
+                        }
                     }
                 }
             }
@@ -75,6 +102,11 @@ struct SettingsView: View {
             }
         }
         .padding(Theme.padding)
+    }
+
+    private func move(_ id: UUID, offset: Int) {
+        guard let index = monitor.accounts.firstIndex(where: { $0.id == id }) else { return }
+        _ = monitor.move(id, to: index + offset)
     }
 
     @ViewBuilder
@@ -142,6 +174,8 @@ private struct AccountSettingsRow: View {
     let onCancel: () -> Void
     let onAuthorizeKeychain: () -> Void
     let onDisconnect: () -> Void
+    let onMoveLeft: (() -> Void)?
+    let onMoveRight: (() -> Void)?
     @StateObject private var draft = AliasDraft()
 
     var body: some View {
@@ -184,6 +218,9 @@ private struct AccountSettingsRow: View {
                         } else {
                             Button(loginLabel, action: onLogin)
                         }
+                        Divider()
+                        Button("왼쪽으로 이동") { onMoveLeft?() }.disabled(onMoveLeft == nil)
+                        Button("오른쪽으로 이동") { onMoveRight?() }.disabled(onMoveRight == nil)
                         Divider()
                         Button(state.profile.authentication == .oauth
                                ? "연결 해제 (앱 인증 삭제)" : "연결 해제 (로그인 유지)",

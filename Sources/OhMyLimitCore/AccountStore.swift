@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public enum AccountProvider: String, Codable, Sendable {
     case codex
@@ -75,7 +76,11 @@ public struct AccountStore: Sendable {
     private var fileURL: URL { directory.appendingPathComponent("accounts.json") }
 
     public func load() throws -> [AccountProfile] {
+        if FileManager.default.fileExists(atPath: directory.path) {
+            try prepareDirectories()
+        }
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
         let document: Document
         do {
             document = try JSONDecoder().decode(Document.self, from: Data(contentsOf: fileURL))
@@ -89,13 +94,51 @@ public struct AccountStore: Sendable {
 
     public func save(_ profiles: [AccountProfile]) throws {
         try validate(profiles)
-        try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
+        try prepareDirectories()
         let data = try JSONEncoder().encode(Document(version: 3, accounts: profiles))
-        try data.write(to: fileURL, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        try Self.writePrivate(data, to: fileURL)
+    }
+
+    private func prepareDirectories() throws {
+        try Self.preparePrivateDirectory(directory)
+        for name in ["snapshots", "profiles"] {
+            let folder = directory.appendingPathComponent(name, isDirectory: true)
+            guard FileManager.default.fileExists(atPath: folder.path) else { continue }
+            try Self.preparePrivateDirectory(folder)
+            if name == "profiles" {
+                for child in try FileManager.default.contentsOfDirectory(
+                    at: folder, includingPropertiesForKeys: [.isDirectoryKey]
+                ) where try child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true {
+                    try Self.preparePrivateDirectory(child)
+                }
+            }
+        }
+    }
+
+    static func preparePrivateDirectory(_ directory: URL) throws {
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+    }
+
+    static func writePrivate(_ data: Data, to file: URL) throws {
+        let temporary = file.deletingLastPathComponent().appendingPathComponent(".\(UUID()).tmp")
+        let descriptor = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+        guard descriptor >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer {
+            try? handle.close()
+            try? FileManager.default.removeItem(at: temporary)
+        }
+        guard fchmod(descriptor, 0o600) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        try handle.write(contentsOf: data)
+        try handle.close()
+        guard rename(temporary.path, file.path) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
     }
 
     private func validate(_ profiles: [AccountProfile]) throws {

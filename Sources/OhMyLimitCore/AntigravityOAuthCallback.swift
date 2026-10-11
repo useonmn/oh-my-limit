@@ -7,6 +7,7 @@ final class AntigravityOAuthCallback: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "local.ohmylimit.antigravity.oauth.callback")
     private var listener: NWListener
+    private var ipv6Reservation: Int32 = -1
     private let state: String
     private let timeout: TimeInterval
     private let ports: [UInt16]
@@ -34,8 +35,11 @@ final class AntigravityOAuthCallback: @unchecked Sendable {
 
     private static func makeListener(port: UInt16?) throws -> NWListener {
         let parameters = NWParameters.tcp
+        let ip = parameters.defaultProtocolStack.internetProtocol as! NWProtocolIP.Options
+        ip.version = .v4
         let endpointPort: NWEndpoint.Port = port.flatMap(NWEndpoint.Port.init(rawValue:)) ?? .any
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: endpointPort)
+        parameters.allowLocalEndpointReuse = false
         return try NWListener(using: parameters)
     }
 
@@ -60,27 +64,82 @@ final class AntigravityOAuthCallback: @unchecked Sendable {
     }
 
     private func armListener(onReady: @escaping @Sendable (URL) -> Void) {
+        let current = listener
         listener.stateUpdateHandler = { status in
+            guard self.listener === current, self.result == nil else { return }
             switch status {
             case .ready:
-                guard self.result == nil, let port = self.listener.port else { return }
-                let url = URL(string: "http://\(self.redirectHost):\(port.rawValue)\(self.path)")!
-                self.redirect = url
-                onReady(url)
+                guard let port = current.port, self.redirect == nil else { return }
+                if self.redirectHost == "localhost" {
+                    do {
+                        self.ipv6Reservation = try Self.reserveIPv6(port: port.rawValue)
+                    } catch { self.nextListener(onReady: onReady); return }
+                }
+                self.publish(port: port.rawValue, onReady: onReady)
             case .failed:
-                // A fixed allow-listed port may be taken; try the next one.
-                guard self.result == nil, self.redirect == nil,
-                      self.portIndex + 1 < self.ports.count,
-                      let next = try? Self.makeListener(port: self.ports[self.portIndex + 1])
-                else { self.finish(.failure(AntigravityOAuthError.callbackUnavailable)); return }
-                self.portIndex += 1
-                self.listener = next
-                self.armListener(onReady: onReady)
-                self.listener.start(queue: self.queue)
+                self.nextListener(onReady: onReady)
             default: break
             }
         }
         listener.newConnectionHandler = { self.receiveNew($0) }
+    }
+
+    private static func reserveIPv6(port: UInt16) throws -> Int32 {
+        // Keep the registered localhost URI for Codex/Claude. A bound but
+        // non-listening ::1 socket prevents a squatter from accepting the code;
+        // IPv6 connections are refused immediately so clients can try IPv4.
+        // Separate Network.framework listeners contend for the same port.
+        let fd = socket(AF_INET6, SOCK_STREAM, 0)
+        guard fd >= 0 else { throw AntigravityOAuthError.callbackUnavailable }
+        var onlyIPv6: Int32 = 1
+        guard setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &onlyIPv6, socklen_t(MemoryLayout<Int32>.size)) == 0,
+              fcntl(fd, F_SETFD, FD_CLOEXEC) == 0 else {
+            Darwin.close(fd)
+            throw AntigravityOAuthError.callbackUnavailable
+        }
+        var address = sockaddr_in6()
+        address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        address.sin6_family = sa_family_t(AF_INET6)
+        address.sin6_addr = in6addr_loopback
+        address.sin6_port = port.bigEndian
+        let status = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in6>.size))
+            }
+        }
+        guard status == 0 else {
+            Darwin.close(fd)
+            throw AntigravityOAuthError.callbackUnavailable
+        }
+        return fd
+    }
+
+    private func publish(port: UInt16, onReady: @escaping @Sendable (URL) -> Void) {
+        guard redirect == nil else { return }
+        let url = URL(string: "http://\(redirectHost):\(port)\(path)")!
+        redirect = url
+        onReady(url)
+    }
+
+    private func nextListener(onReady: @escaping @Sendable (URL) -> Void) {
+        closeListeners()
+        guard result == nil, redirect == nil, portIndex + 1 < ports.count,
+              let next = try? Self.makeListener(port: ports[portIndex + 1])
+        else { finish(.failure(AntigravityOAuthError.callbackUnavailable)); return }
+        portIndex += 1
+        listener = next
+        armListener(onReady: onReady)
+        listener.start(queue: queue)
+    }
+
+    private func closeListeners() {
+        listener.newConnectionHandler = nil
+        listener.stateUpdateHandler = nil
+        listener.cancel()
+        if ipv6Reservation >= 0 {
+            Darwin.close(ipv6Reservation)
+            ipv6Reservation = -1
+        }
     }
 
     func redirectURI() async -> URL? {
@@ -149,15 +208,11 @@ final class AntigravityOAuthCallback: @unchecked Sendable {
         result = outcome
         timer?.cancel()
         timer = nil
-        listener.newConnectionHandler = nil
-        listener.stateUpdateHandler = nil
-        listener.cancel()
+        closeListeners()
         connections.values.forEach { $0.cancel() }
         connections.removeAll()
         connectionTimers.values.forEach { $0.cancel() }
         connectionTimers.removeAll()
-        connections.values.forEach { $0.cancel() }
-        connections.removeAll()
         let pending = continuation
         continuation = nil
         pending?.resume(with: outcome)

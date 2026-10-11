@@ -41,30 +41,27 @@ func squircle(_ rect: CGRect, exponent: CGFloat = 4.6) -> CGPath {
 
 let body = squircle(CGRect(x: 100, y: 100, width: 824, height: 824))
 
-// Standard drop shadow below the tile.
+// Standard macOS drop shadow below the tile, lighter for a white body.
 cg.saveGState()
-cg.setShadow(offset: CGSize(width: 0, height: -12), blur: 28, color: color(0, 0, 0, 0.35))
-cg.setFillColor(color(16, 24, 31))
+cg.setShadow(offset: CGSize(width: 0, height: -10), blur: 24, color: color(0, 0, 0, 0.22))
+cg.setFillColor(color(255, 255, 255))
 cg.addPath(body)
 cg.fillPath()
 cg.restoreGState()
 
+// White tile with the faint top-to-bottom falloff of Apple's light icons.
 cg.saveGState()
 cg.addPath(body)
 cg.clip()
-cg.drawLinearGradient(gradient([color(42, 56, 66), color(13, 19, 25)]),
+cg.drawLinearGradient(gradient([color(255, 255, 255), color(240, 241, 245)]),
                       start: CGPoint(x: 512, y: 924), end: CGPoint(x: 512, y: 100), options: [])
-// Faint mint glow behind the rings for depth.
-cg.drawRadialGradient(gradient([color(48, 232, 160, 0.09), color(48, 232, 160, 0)]),
-                      startCenter: CGPoint(x: 512, y: 512), startRadius: 0,
-                      endCenter: CGPoint(x: 512, y: 512), endRadius: 400, options: [])
-// Top-lit inner rim.
+cg.restoreGState()
+// Hairline edge so the tile holds its shape on white backgrounds.
+cg.saveGState()
 cg.addPath(body)
-cg.setLineWidth(8)
-cg.replacePathWithStrokedPath()
-cg.clip()
-cg.drawLinearGradient(gradient([color(255, 255, 255, 0.28), color(255, 255, 255, 0)]),
-                      start: CGPoint(x: 512, y: 924), end: CGPoint(x: 512, y: 600), options: [])
+cg.setLineWidth(3)
+cg.setStrokeColor(color(0, 0, 0, 0.10))
+cg.strokePath()
 cg.restoreGState()
 
 // Two usage rings, like the menu bar account rings: thick enough to read at 16 px.
@@ -74,12 +71,12 @@ func ring(radius: CGFloat, width: CGFloat, fraction: CGFloat, colors: [CGColor])
     let end = start - fraction * 2 * .pi
     cg.setLineCap(.round)
     cg.setLineWidth(width)
-    cg.setStrokeColor(color(255, 255, 255, 0.07))
+    cg.setStrokeColor(color(0, 0, 0, 0.06))
     cg.addArc(center: center, radius: radius, startAngle: 0, endAngle: 2 * .pi, clockwise: false)
     cg.strokePath()
 
     cg.saveGState()
-    cg.setShadow(offset: CGSize(width: 0, height: -6), blur: 16, color: color(0, 0, 0, 0.45))
+    cg.setShadow(offset: CGSize(width: 0, height: -4), blur: 10, color: color(0, 0, 0, 0.12))
     cg.setStrokeColor(colors[1])
     cg.addArc(center: center, radius: radius, startAngle: start, endAngle: end, clockwise: true)
     cg.strokePath()
@@ -93,8 +90,9 @@ func ring(radius: CGFloat, width: CGFloat, fraction: CGFloat, colors: [CGColor])
                           end: CGPoint(x: 512, y: center.y - radius - width), options: [])
     cg.restoreGState()
 }
-ring(radius: 268, width: 92, fraction: 0.74, colors: [color(118, 250, 200), color(28, 196, 132)])
-ring(radius: 148, width: 76, fraction: 0.42, colors: [color(255, 204, 128), color(255, 138, 61)])
+// Monochrome on white: a near-black main ring and a mid-gray secondary ring.
+ring(radius: 262, width: 104, fraction: 0.74, colors: [color(58, 58, 60), color(28, 28, 30)])
+ring(radius: 140, width: 88, fraction: 0.42, colors: [color(152, 152, 157), color(110, 110, 115)])
 
 NSGraphicsContext.restoreGraphicsState()
 let master = output.appendingPathComponent("icon_512x512@2x.png")

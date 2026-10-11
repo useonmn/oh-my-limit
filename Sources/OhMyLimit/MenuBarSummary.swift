@@ -15,8 +15,9 @@ enum MenuBarSummary {
         let labelGap: CGFloat = 4
         let accountGap: CGFloat = 10
         let height: CGFloat = 18
-        let width = parts.reduce(CGFloat(0)) { $0 + logoSize + labelGap + ceil($1.text.size().width) }
-            + CGFloat(max(0, parts.count - 1)) * accountGap
+        let width = min(Theme.menuBarMaximumWidth,
+                        parts.reduce(CGFloat(0)) { $0 + logoSize + labelGap + ceil($1.text.size().width) }
+                        + CGFloat(max(0, parts.count - 1)) * accountGap)
         let image = NSImage(size: NSSize(width: width, height: height), flipped: false) { _ in
             var x: CGFloat = 0
             for part in parts {

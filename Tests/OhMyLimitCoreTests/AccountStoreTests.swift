@@ -18,7 +18,82 @@ struct AccountStoreTests {
 
         let document = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
         let profiles = try #require(document["accounts"] as? [[String: Any]])
+        #expect(document["version"] as? Int == 3)
         #expect(profiles.first?["provider"] as? String == "antigravity")
+    }
+
+    @Test(arguments: [1, 2, 3])
+    func supportedVersionsAlwaysSaveAsVersionThree(_ version: Int) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("Versions-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("accounts.json")
+        try Data("{\"version\":\(version),\"accounts\":[]}".utf8).write(to: file)
+        let store = AccountStore(directory: root)
+        try store.save(store.load())
+        let document = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        #expect(document["version"] as? Int == 3)
+    }
+
+    @Test func versionFourIsRejectedWithoutChangingConfiguration() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("VersionFour-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("accounts.json")
+        let data = Data("{\"version\":4,\"accounts\":[]}".utf8)
+        try data.write(to: file)
+        do {
+            _ = try AccountStore(directory: root).load()
+            Issue.record("Version four must be rejected")
+        } catch {
+            guard case AccountStoreError.unreadableConfiguration = error else {
+                Issue.record("Unexpected error: \(error)")
+                return
+            }
+        }
+        #expect(try Data(contentsOf: file) == data)
+    }
+
+    @Test func loadAndSaveTightenExistingDirectoriesAndCreatePrivateFiles() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("Permissions-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let snapshots = root.appendingPathComponent("snapshots")
+        let profiles = root.appendingPathComponent("profiles")
+        let profile = profiles.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: snapshots, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true)
+        let folders = [root, snapshots, profiles, profile]
+        let store = AccountStore(directory: root)
+        let file = root.appendingPathComponent("accounts.json")
+        try store.save([])
+        #expect(try permissions(file) == 0o600)
+        for folder in folders {
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+        #expect(try store.load().isEmpty)
+        #expect(try permissions(file) == 0o600)
+        for folder in folders {
+            #expect(try permissions(folder) == 0o700)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+        }
+        try store.save([])
+        #expect(try permissions(file) == 0o600)
+        for folder in folders { #expect(try permissions(folder) == 0o700) }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).sorted()
+                == ["accounts.json", "profiles", "snapshots"])
+    }
+
+    @Test func firstSaveCreatesPrivateDirectoryAndConfiguration() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("FirstSave-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try AccountStore(directory: root).save([])
+        #expect(try permissions(root) == 0o700)
+        #expect(try permissions(root.appendingPathComponent("accounts.json")) == 0o600)
+    }
+
+    private func permissions(_ url: URL) throws -> Int {
+        try #require(FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int)
     }
 
     @Test func legacyProfileKeepsCodexProviderAndHome() throws {

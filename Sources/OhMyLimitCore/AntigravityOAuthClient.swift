@@ -1,6 +1,4 @@
-import CryptoKit
 import Foundation
-import Security
 
 public struct AntigravityOAuthClient: Sendable {
     typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
@@ -18,8 +16,8 @@ public struct AntigravityOAuthClient: Sendable {
 
     public func login(onURL: @escaping @Sendable (URL) -> Void) async throws -> AntigravityOAuthCredentials {
         try Task.checkCancellation()
-        let state = try Self.randomURLSafeToken()
-        let verifier = try Self.randomURLSafeToken()
+        let state = try OAuthPKCE.randomURLSafe()
+        let verifier = try OAuthPKCE.randomURLSafe()
         let callback = try AntigravityOAuthCallback(state: state)
         let code = try await callback.wait { redirectURI in
             var url = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
@@ -31,7 +29,7 @@ public struct AntigravityOAuthClient: Sendable {
                 URLQueryItem(name: "access_type", value: "offline"),
                 URLQueryItem(name: "prompt", value: "consent"),
                 URLQueryItem(name: "state", value: state),
-                URLQueryItem(name: "code_challenge", value: Self.challenge(for: verifier)),
+                URLQueryItem(name: "code_challenge", value: OAuthPKCE.challenge(verifier)),
                 URLQueryItem(name: "code_challenge_method", value: "S256")
             ]
             onURL(url.url!)
@@ -115,21 +113,6 @@ public struct AntigravityOAuthClient: Sendable {
         }
     }
 
-    static func randomURLSafeToken() throws -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-            throw AntigravityOAuthError.callbackUnavailable
-        }
-        return base64URL(Data(bytes))
-    }
-
-    static func challenge(for verifier: String) -> String { base64URL(Data(SHA256.hash(data: Data(verifier.utf8)))) }
-
-    private static func base64URL(_ data: Data) -> String {
-        data.base64EncodedString().replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-    }
-
     private static func form(_ fields: [String: String]) -> Data {
         let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
         return Data(fields.keys.sorted().map { key in
@@ -153,50 +136,8 @@ public struct AntigravityOAuthClient: Sendable {
     }
 }
 
-/// One ephemeral session per request; redirect targets never receive credentials.
-final class AntigravityOAuthHTTPS: NSObject, URLSessionTaskDelegate, Sendable {
+enum AntigravityOAuthHTTPS {
     static func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpCookieStorage = nil
-        configuration.httpShouldSetCookies = false
-        configuration.urlCredentialStorage = nil
-        configuration.urlCache = nil
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 30
-        let session = URLSession(configuration: configuration, delegate: AntigravityOAuthHTTPS(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let response = response as? HTTPURLResponse, response.expectedContentLength <= 65_536 else {
-            throw AntigravityOAuthError.invalidResponse
-        }
-        var data = Data()
-        for try await byte in bytes {
-            try Task.checkCancellation()
-            guard data.count < 65_536 else { throw AntigravityOAuthError.invalidResponse }
-            data.append(byte)
-        }
-        return (data, response)
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
-        completionHandler(nil)
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        handle(challenge, completionHandler)
-    }
-
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        handle(challenge, completionHandler)
-    }
-
-    private func handle(_ challenge: URLAuthenticationChallenge,
-                        _ completion: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        completion(challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust
-            ? .performDefaultHandling : .cancelAuthenticationChallenge, nil)
+        try await OAuthHTTPS.send(request, invalidResponse: AntigravityOAuthError.invalidResponse)
     }
 }

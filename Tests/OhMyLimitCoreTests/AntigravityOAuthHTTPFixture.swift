@@ -79,6 +79,17 @@ final class AntigravityOAuthHTTPFixture: @unchecked Sendable {
         await withCheckedContinuation { continuation in queue.async { self.stopOnQueue(); continuation.resume() } }
     }
 
+    func respond(_ body: String) async {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                let response = AntigravityLoopbackFixture.response(body)
+                self.connection?.send(content: Data(response.utf8), completion: .contentProcessed { _ in
+                    continuation.resume()
+                })
+            }
+        }
+    }
+
     private func stopOnQueue() {
         readiness?.resume(throwing: URLError(.timedOut))
         readiness = nil

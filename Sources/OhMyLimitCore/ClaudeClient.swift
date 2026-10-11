@@ -18,30 +18,36 @@ public enum ClaudeClientError: Error, LocalizedError, Sendable {
 
 /// Reads Claude subscription usage with an access token from this app's own Claude login.
 public struct ClaudeClient: Sendable {
-    private let session: URLSession
+    private let usageURL: URL
 
     public init() {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 12
-        configuration.timeoutIntervalForResource = 15
-        session = URLSession(configuration: configuration, delegate: ClaudeNoRedirect(), delegateQueue: nil)
+        usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
+    }
+
+    init(usageURL: URL) {
+        self.usageURL = usageURL
     }
 
     public func fetchUsage(accessToken: String, identity: CodexIdentity,
                            source: UsageSource = .claudeOAuth) async throws -> CodexUsageSnapshot {
         try Task.checkCancellation()
-        var request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
+        var request = URLRequest(url: usageURL)
+        request.timeoutInterval = 12
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("OhMyLimit", forHTTPHeaderField: "User-Agent")
         let data: Data
-        let response: URLResponse
-        do { (data, response) = try await session.data(for: request) }
+        let response: HTTPURLResponse
+        do {
+            (data, response) = try await OAuthHTTPS.send(
+                request, limit: 1_048_576, invalidResponse: ClaudeClientError.invalidResponse, resourceTimeout: 15
+            )
+        }
         catch {
             if error is CancellationError || Task.isCancelled { throw CancellationError() }
+            if let error = error as? ClaudeClientError { throw error }
             throw ClaudeClientError.requestFailed
         }
-        guard let response = response as? HTTPURLResponse else { throw ClaudeClientError.requestFailed }
         switch response.statusCode {
         case 200: break
         case 401, 403: throw ClaudeClientError.unauthorized
@@ -50,14 +56,6 @@ public struct ClaudeClient: Sendable {
         }
         guard data.count <= 1_048_576 else { throw ClaudeClientError.invalidResponse }
         return try ClaudeUsageParser.parse(data, identity: identity, source: source)
-    }
-}
-
-private final class ClaudeNoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    func urlSession(_ session: URLSession, task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest: URLRequest,
-                    completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(nil)
     }
 }
 

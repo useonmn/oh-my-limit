@@ -3,6 +3,61 @@ import Testing
 @testable import OhMyLimitCore
 
 struct ClaudeClientTests {
+    @Test(arguments: [false, true]) func realUsageTransportCapsDeclaredAndChunkedBodies(_ chunked: Bool) async throws {
+        let server = try AntigravityLoopbackFixture { _ in
+            let body = String(repeating: "x", count: 1_048_577)
+            if chunked {
+                return "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n100001\r\n\(body)\r\n0\r\n\r\n"
+            }
+            return AntigravityLoopbackFixture.response(body)
+        }
+        let port = try await server.start()
+        let client = ClaudeClient(usageURL: URL(string: "http://127.0.0.1:\(port)/usage")!)
+        await #expect(throws: ClaudeClientError.invalidResponse) {
+            try await client.fetchUsage(accessToken: "fixture", identity: CodexIdentity())
+        }
+        await server.stop()
+    }
+
+    @Test func realUsageTransportAcceptsExactLimitAndRejectsRedirects() async throws {
+        let server = try AntigravityLoopbackFixture { request in
+            if request.hasPrefix("GET /redirect ") {
+                return AntigravityLoopbackFixture.response("", status: 302, headers: "Location: /usage\r\n")
+            }
+            let json = #"{"seven_day":{"utilization":42}}"#
+            return AntigravityLoopbackFixture.response(json + String(repeating: " ", count: 1_048_576 - json.utf8.count))
+        }
+        let port = try await server.start()
+        do {
+            let client = ClaudeClient(usageURL: URL(string: "http://127.0.0.1:\(port)/usage")!)
+            let usage = try await client.fetchUsage(accessToken: "fixture", identity: CodexIdentity())
+            #expect(usage.windows.first?.usedPercent == 42)
+            let redirect = ClaudeClient(usageURL: URL(string: "http://127.0.0.1:\(port)/redirect")!)
+            await #expect(throws: ClaudeClientError.requestFailed) {
+                try await redirect.fetchUsage(accessToken: "fixture", identity: CodexIdentity())
+            }
+            #expect(await server.requests().count == 2)
+        } catch { await server.stop(); throw error }
+        await server.stop()
+    }
+
+    @Test func cancelledUsageRequestClosesConnection() async throws {
+        let server = try AntigravityOAuthHTTPFixture(sendHeaders: true)
+        let port = try await server.start()
+        var requests = server.requests.makeAsyncIterator()
+        var closed = server.closed.makeAsyncIterator()
+        let client = ClaudeClient(usageURL: URL(string: "http://127.0.0.1:\(port)/usage")!)
+        let task = Task { try await client.fetchUsage(accessToken: "fixture", identity: CodexIdentity()) }
+        defer { task.cancel() }
+        do {
+            _ = try #require(await requests.next())
+            task.cancel()
+            await #expect(throws: CancellationError.self) { try await task.value }
+            _ = try #require(await closed.next())
+        } catch { await server.stop(); throw error }
+        await server.stop()
+    }
+
     @Test func newerLimitsPreserveWeeklyAndModelBoundaries() throws {
         let data = Data(#"""
         {"limits":[

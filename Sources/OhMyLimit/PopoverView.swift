@@ -15,7 +15,7 @@ struct AccountCard: View {
         VStack(alignment: .leading, spacing: Theme.panelGap) {
             HStack(alignment: .top) {
                 ProviderMark(provider: state.profile.provider)
-                    .frame(width: 11, height: 11).padding(4)
+                    .frame(width: Theme.detailProviderSize, height: Theme.detailProviderSize).padding(Theme.panelSmall)
                     .padding(.top, Theme.panelSmall)
                 VStack(alignment: .leading, spacing: Theme.panelSmall) {
                     Text(state.profile.name).font(Theme.panelAccount).lineLimit(1)
@@ -49,7 +49,7 @@ struct AccountCard: View {
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(Theme.panelBody)
-                        .frame(width: 17, height: 17)
+                        .frame(width: Theme.panelMenuSize, height: Theme.panelMenuSize)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -195,6 +195,7 @@ struct PopoverView: View {
     let now: Date
     var preview = false
     var selectedID: UUID?
+    var measuredHeight: CGFloat = Theme.panelMinimumHeight
     var actions = PopoverActions()
     @StateObject private var drag = RingDragState()
 
@@ -210,7 +211,7 @@ struct PopoverView: View {
         let view = PopoverView(accounts: accounts, notice: notice, now: now,
                                preview: preview, selectedID: selectedID)
         let host = NSHostingView(rootView: view.naturalLayout)
-        return min(434, max(112, ceil(host.fittingSize.height)))
+        return min(Theme.panelMaximumHeight, max(Theme.panelMinimumHeight, ceil(host.fittingSize.height)))
     }
 
     private var naturalLayout: some View {
@@ -229,10 +230,7 @@ struct PopoverView: View {
             if !accounts.isEmpty { accountSelector }
             content(scrolling: true)
         }
-        .frame(width: Theme.width, height: Self.height(
-            for: accounts, notice: notice, now: now, preview: preview,
-            selectedID: selectedID
-        ))
+        .frame(width: Theme.width, height: measuredHeight)
         .foregroundStyle(Theme.panelPrimary)
         .tint(Theme.mint)
         .menuSurface()
@@ -240,18 +238,16 @@ struct PopoverView: View {
 
     private var header: some View {
         HStack(spacing: Theme.panelSmall) {
-            if preview {
-                Text("예시 데이터")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Theme.panelSecondary)
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .overlay { Capsule().stroke(Theme.panelSeparator.opacity(0.8), lineWidth: 0.5) }
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Oh My Limit").font(Theme.panelTitle)
+                Text(preview ? "예시 데이터 · 사용률" : "사용률")
+                    .font(Theme.panelCaption)
             }
             Spacer(minLength: Theme.panelSmall)
             if !accounts.isEmpty {
                 Button(action: actions.refreshAll) {
                     Image(systemName: "arrow.clockwise")
-                        .frame(width: 18, height: 18)
+                        .frame(width: Theme.panelControlSize, height: Theme.panelControlSize)
                 }
                 .buttonStyle(.borderless)
                 .keyboardShortcut("r")
@@ -259,13 +255,19 @@ struct PopoverView: View {
                 .help("새로고침 (⌘R)")
                 .accessibilityLabel("모든 계정 새로고침")
             }
+            Button(action: actions.addAccount) {
+                Image(systemName: "plus")
+                    .frame(width: Theme.panelControlSize, height: Theme.panelControlSize)
+            }
+            .help("계정 추가")
+            .accessibilityLabel("계정 추가")
             Menu {
                 Button("설정…", action: actions.settings).keyboardShortcut(",")
                 Divider()
                 Button("종료", action: actions.quit).keyboardShortcut("q")
             } label: {
                 Image(systemName: "gearshape")
-                    .frame(width: 18, height: 18)
+                    .frame(width: Theme.panelControlSize, height: Theme.panelControlSize)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -292,12 +294,22 @@ struct PopoverView: View {
                             selected: state.id == selectedAccount?.id,
                             select: { actions.selectAccount(state.id) }
                         )
+                        .contextMenu {
+                            Button("왼쪽으로 이동") { actions.moveAccount(state.id, index - 1) }
+                                .disabled(index == 0)
+                            Button("오른쪽으로 이동") { actions.moveAccount(state.id, index + 1) }
+                                .disabled(index == accounts.count - 1)
+                        }
+                        .accessibilityAction(named: "왼쪽으로 이동") {
+                            if index > 0 { actions.moveAccount(state.id, index - 1) }
+                        }
+                        .accessibilityAction(named: "오른쪽으로 이동") {
+                            if index + 1 < accounts.count { actions.moveAccount(state.id, index + 1) }
+                        }
                         .id(state.id)
                         .offset(x: drag.draggingID == state.id
                                 ? drag.offset - CGFloat(index - drag.startIndex) * Self.slotWidth : 0)
                         .zIndex(drag.draggingID == state.id ? 1 : 0)
-                        .shadow(color: .black.opacity(drag.draggingID == state.id ? 0.4 : 0),
-                                radius: 8, y: 4)
                         .highPriorityGesture(
                             DragGesture(minimumDistance: 4, coordinateSpace: .named("ringRow"))
                                 .onChanged { value in
@@ -337,7 +349,7 @@ struct PopoverView: View {
                 if let id { proxy.scrollTo(id, anchor: .center) }
             }
         }
-        .frame(height: accounts.count > 3 ? 131 : 120)
+        .frame(height: accounts.count > 3 ? Theme.scrollingSelectorHeight : Theme.selectorHeight)
     }
 
     private func content(scrolling: Bool) -> some View {
@@ -347,7 +359,7 @@ struct PopoverView: View {
                     Text(notice).font(Theme.panelCaption).fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                     Button(action: actions.dismissNotice) {
-                        Image(systemName: "xmark").frame(width: 14, height: 14)
+                        Image(systemName: "xmark").frame(width: Theme.panelDismissSize, height: Theme.panelDismissSize)
                     }
                     .buttonStyle(.borderless).accessibilityLabel("알림 닫기")
                 }
@@ -407,6 +419,8 @@ struct PopoverView: View {
 @MainActor
 final class PopoverFlow: ObservableObject {
     @Published var showingSettings = false
+    @Published var measuredHeight = Theme.panelMinimumHeight
+    @Published var now = Date()
 }
 
 struct LivePopover: View {
@@ -417,13 +431,13 @@ struct LivePopover: View {
     let settingsView: AnyView
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 30)) { context in
+        Group {
             if flow.showingSettings {
                 VStack(spacing: 0) {
                     HStack(spacing: Theme.small) {
                         Button(action: { flow.showingSettings = false }) {
                             Image(systemName: "chevron.left")
-                                .frame(width: 26, height: 26)
+                                .frame(width: Theme.settingsControlSize, height: Theme.settingsControlSize)
                         }
                         .accessibilityLabel("뒤로")
                         Text("설정").font(Theme.settingsTitle)
@@ -433,7 +447,7 @@ struct LivePopover: View {
                     .font(Theme.settingsBody)
                     .foregroundStyle(Theme.panelSecondary)
                     .padding(.horizontal, Theme.padding)
-                    .frame(height: 40)
+                    .frame(height: Theme.settingsHeaderHeight)
                     settingsView
                 }
                 .foregroundStyle(Theme.panelPrimary)
@@ -441,11 +455,13 @@ struct LivePopover: View {
                 .menuSurface()
             } else {
                 PopoverView(
-                    accounts: monitor.accounts, notice: monitor.notice, now: context.date,
-                    selectedID: selection.selectedID, actions: actions
+                    accounts: monitor.accounts, notice: monitor.notice, now: flow.now,
+                    selectedID: selection.selectedID, measuredHeight: flow.measuredHeight, actions: actions
                 )
             }
         }
+        .frame(width: flow.showingSettings ? Theme.settingsWidth : Theme.width,
+               height: flow.measuredHeight)
     }
 }
 
@@ -463,8 +479,7 @@ private struct AccountRing: View {
     }
 
     private var value: String {
-        guard let window else { return "—" }
-        return (state.isStale(at: now) ? "~" : "") + String(format: "%.0f%%", window.usedPercent)
+        AccountUsageDisplay.value(for: state, at: now)
     }
 
     private var caption: String {
@@ -493,7 +508,7 @@ private struct AccountRing: View {
                             .rotationEffect(.degrees(-90))
                     }
                     ProviderMark(provider: state.profile.provider)
-                        .frame(width: 15, height: 15)
+                        .frame(width: Theme.ringProviderSize, height: Theme.ringProviderSize)
                         .opacity(window == nil ? 0.55 : 1)
                 }
                 .frame(width: Theme.ringSize, height: Theme.ringSize)

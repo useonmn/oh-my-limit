@@ -6,9 +6,9 @@ import Testing
     private let config = AntigravityOAuthConfiguration(clientID: "native+&%", clientSecret: "fixture+&%")
 
     @Test func canonicalPKCEAndRandomState() throws {
-        #expect(AntigravityOAuthClient.challenge(for: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
-        let first = try AntigravityOAuthClient.randomURLSafeToken()
-        let second = try AntigravityOAuthClient.randomURLSafeToken()
+        #expect(OAuthPKCE.challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
+        let first = try OAuthPKCE.randomURLSafe()
+        let second = try OAuthPKCE.randomURLSafe()
         #expect(first.count == 43)
         #expect(first != second)
         #expect(first.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") })

@@ -5,6 +5,7 @@ cd "$ROOT"
 xcrun swift build -c release
 BIN="$(xcrun swift build -c release --show-bin-path)"
 APP="$ROOT/dist/OhMyLimit.app"
+rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/OhMyLimit" "$APP/Contents/MacOS/OhMyLimit"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
@@ -15,7 +16,9 @@ xcrun swift "$ROOT/scripts/generate-icon.swift" "$ICONSET"
 xcrun iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 # A stable self-signed identity keeps Keychain/TCC grants across rebuilds;
 # ad-hoc signing makes macOS re-prompt on every access.
-if security find-certificate -c "Oh My Limit Dev" >/dev/null 2>&1; then
+# Without -v so an untrusted self-signed identity still counts; find-identity
+# only lists certificates whose private key is present.
+if security find-identity -p codesigning | grep '"Oh My Limit Dev"' >/dev/null; then
     IDENTITY="Oh My Limit Dev"
 else
     IDENTITY="-"

@@ -10,18 +10,23 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private let panel = PopoverPanel()
     private let selection = AccountSelection()
     private let flow = PopoverFlow()
-    private var previewWindow: NSWindow?
-    private var previewDirectory: URL?
+    var previewWindow: NSWindow?
+    var previewDirectory: URL?
     private var timer: Timer?
     private var subscription: AnyCancellable?
     private var outsideClickMonitor: Any?
+    private let launchAtLogin = LaunchAtLoginController()
+    private var previousApplication: NSRunningApplication?
+    private var shutdownTask: Task<Void, Never>?
+    private var shutdownDeadline: DispatchWorkItem?
+    private var terminationReplied = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let scenario = argument("--preview") {
             showPreview(scenario)
             return
         }
-        enableLaunchAtLogin()
+        launchAtLogin.prepareForNormalLaunch()
         NSApp.setActivationPolicy(.accessory)
         let dataDirectory = argument("--data-directory").map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -54,7 +59,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         ))
         subscription = model.$accounts.combineLatest(model.$notice, selection.$selectedID)
             .combineLatest(flow.$showingSettings)
-            .sink { [weak self] _, showingSettings in
+            .sink { [weak self] _ in
                 // @Published emits before storage commits. Native sizing can
                 // render LivePopover, so wait until it can read the new state.
                 DispatchQueue.main.async { [weak self] in
@@ -62,13 +67,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
                     let states = monitor.accounts
                     self.selection.reconcile(accountIDs: states.map(\.id))
                     self.updateStatus(states)
-                    self.setPanelContentSize(NSSize(
-                        width: showingSettings ? Theme.settingsWidth : Theme.width,
-                        height: showingSettings ? Theme.settingsHeight(accountCount: states.count) : PopoverView.height(
-                            for: states, notice: monitor.notice,
-                            selectedID: self.selection.selectedID
-                        )
-                    ))
+                    self.updatePanelSize()
                 }
             }
         // Global monitors observe clicks in other apps even when we are
@@ -80,15 +79,26 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
                 self?.closePanel()
             }
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.monitor?.refreshAll(manual: false)
                 if let states = self?.monitor?.accounts { self?.updateStatus(states) }
+                self?.updatePanelSize()
             }
         }
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(woke), name: NSWorkspace.didWakeNotification, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(dismissPanel), name: NSApplication.didResignActiveNotification, object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(dismissPanel), name: NSWorkspace.activeSpaceDidChangeNotification, object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(dismissPanel), name: NSWorkspace.didActivateApplicationNotification, object: nil
+        )
+        updatePanelSize()
         model.refreshAll(manual: false)
         if CommandLine.arguments.contains("--open") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.revealPopover() }
@@ -103,15 +113,31 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         timer?.invalidate()
         guard let monitor else { return .terminateNow }
-        Task { @MainActor in
+        guard shutdownTask == nil else { return .terminateLater }
+        let deadline = DispatchWorkItem { [weak self] in
+            self?.finishTermination(sender)
+        }
+        shutdownDeadline = deadline
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: deadline)
+        shutdownTask = Task { @MainActor [weak self] in
             await monitor.stopAndWait()
-            sender.reply(toApplicationShouldTerminate: true)
+            self?.finishTermination(sender)
         }
         return .terminateLater
     }
 
+    private func finishTermination(_ sender: NSApplication) {
+        guard !terminationReplied else { return }
+        terminationReplied = true
+        shutdownDeadline?.cancel()
+        shutdownTask?.cancel()
+        sender.reply(toApplicationShouldTerminate: true)
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+        NotificationCenter.default.removeObserver(self)
+        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
         if let previewDirectory { try? FileManager.default.removeItem(at: previewDirectory) }
     }
 
@@ -128,17 +154,16 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             login: { [weak self] id in self?.login(id) },
             cancel: { [weak self] id in self?.monitor?.cancel(id) },
             disconnect: { [weak self] id in self?.monitor?.disconnect(id) },
-            moveAccount: { [weak self] id, index in self?.monitor?.move(id, to: index) }
+            moveAccount: { [weak self] id, index in _ = self?.monitor?.move(id, to: index) }
         )
     }
 
     private func updateStatus(_ states: [AccountState]) {
         let now = Date()
         let values = states.map { state in
-            guard let window = state.menuWindow,
-                  !(window.resetsAt.map { $0 <= now } ?? false) else { return "—" }
-            var text = (state.isStale(at: now) ? "~" : "") + String(format: "%.0f%%", window.usedPercent)
-            if window.windowDurationMins == 10_080, let resetsAt = window.resetsAt {
+            var text = AccountUsageDisplay.value(for: state, at: now)
+            if text != "—", let window = state.menuWindow,
+               window.windowDurationMins == 10_080, let resetsAt = window.resetsAt {
                 text += "·" + Self.resetCountdown(until: resetsAt, from: now)
             }
             return text
@@ -150,8 +175,12 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             button.imagePosition = .imageLeading
         } else {
             button.title = ""
-            button.image = MenuBarSummary.image(for: zip(states, values).map {
-                (provider: $0.0.profile.provider, text: $0.1)
+            let visibleStates = Array(states.prefix(Theme.menuBarAccountLimit))
+            button.image = MenuBarSummary.image(for: visibleStates.enumerated().map {
+                (provider: $0.element.profile.provider,
+                 text: AccountUsageDisplay.value(for: $0.element, at: now)
+                    + ($0.offset == visibleStates.count - 1 && states.count > visibleStates.count
+                       ? " +\(states.count - visibleStates.count)" : ""))
             })
             button.imagePosition = .imageOnly
         }
@@ -179,6 +208,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private func revealPopover() {
         guard let button = statusItem?.button, let buttonWindow = button.window else { return }
         if !panel.isVisible {
+            previousApplication = NSWorkspace.shared.frontmostApplication
+            updatePanelSize()
             positionPanel(relativeTo: button, in: buttonWindow)
             if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 panel.orderFront(nil)
@@ -191,11 +222,10 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        NSApp.activate(ignoringOtherApps: true)
         // Reclaim key status a tick later; dismissing the settings menu can
         // steal it back, leaving the panel unable to receive keyboard input.
         DispatchQueue.main.async {
-            self.panel.makeKey()
+            if self.panel.isVisible { self.panel.makeKey() }
         }
         monitor?.refreshAll(manual: false)
     }
@@ -230,11 +260,33 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func updatePanelSize() {
+        guard let monitor else { return }
+        let now = Date()
+        flow.now = now
+        let height = flow.showingSettings
+            ? Theme.settingsHeight(accountCount: monitor.accounts.count)
+            : PopoverView.height(for: monitor.accounts, notice: monitor.notice,
+                                 now: now, selectedID: selection.selectedID)
+        flow.measuredHeight = height
+        setPanelContentSize(NSSize(
+            width: flow.showingSettings ? Theme.settingsWidth : Theme.width, height: height
+        ))
+    }
+
     private func closePanel() {
         guard panel.isVisible else { return }
         panel.orderOut(nil)
         flow.showingSettings = false
+        // Do not steal focus back if the user already switched to another app.
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
+           let previousApplication, !previousApplication.isTerminated {
+            previousApplication.activate(options: [])
+        }
+        previousApplication = nil
     }
+
+    @objc private func dismissPanel() { closePanel() }
 
     @objc private func woke() { monitor?.refreshAll(manual: false) }
 
@@ -302,143 +354,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    private func showPreview(_ scenario: String) {
-        NSApp.setActivationPolicy(.regular)
-        if let appearance = argument("--appearance") {
-            NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
-        }
-        let content: AnyView
-        if scenario == "settings" || scenario == "settings-connected" || scenario == "settings-claude" {
-            let store = AccountStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
-            previewDirectory = store.directory
-            if scenario == "settings-claude" {
-                do {
-                    try store.save([
-                        AccountProfile(name: "Claude", homePath: store.directory.path, isManaged: false,
-                                       provider: .claude, authentication: .oauth,
-                                       oauthIdentity: CodexIdentity(email: "claude@example.com", accountID: "preview"))
-                    ])
-                } catch {
-                    FileHandle.standardError.write(Data("Preview setup failed: \(error)\n".utf8))
-                    try? FileManager.default.removeItem(at: store.directory)
-                    exit(1)
-                }
-            }
-            if scenario == "settings-connected" {
-                do {
-                    try store.save([
-                        AccountProfile(name: "개인", homePath: store.directory.path, isManaged: false,
-                                       authentication: .oauth, oauthIdentity: CodexIdentity(email: "personal@example.com")),
-                        AccountProfile(name: "업무", homePath: store.directory.path, isManaged: false,
-                                       authentication: .oauth, oauthIdentity: CodexIdentity(email: "work@example.com")),
-                        AccountProfile(name: "Claude", homePath: store.directory.path, isManaged: false,
-                                       provider: .claude, authentication: .oauth,
-                                       oauthIdentity: CodexIdentity(email: "claude@example.com")),
-                        AccountProfile(name: "Antigravity", homePath: store.directory.path, isManaged: false,
-                                       provider: .antigravity, authentication: .oauth,
-                                       oauthIdentity: CodexIdentity(email: "team@example.com"))
-                    ])
-                } catch {
-                    FileHandle.standardError.write(Data("Preview setup failed: \(error)\n".utf8))
-                    try? FileManager.default.removeItem(at: store.directory)
-                    exit(1)
-                }
-            }
-            let model = UsageMonitor(store: store)
-            let settings = AnyView(SettingsView(
-                monitor: model,
-                loginAntigravity: {}, connectAntigravity: {}, openAntigravity: {}, loginCodex: {},
-                loginClaudeAccount: {},
-                renameAccount: { _, _ in }, refreshAccount: { _ in }, loginAccount: { _ in },
-                cancelLogin: { _ in }, authorizeKeychain: { _ in }, disconnectAccount: { _ in },
-                initialProvider: scenario == "settings-claude" ? .claude : .codex
-            ))
-            let previewFlow = PopoverFlow()
-            previewFlow.showingSettings = true
-            content = AnyView(LivePopover(
-                monitor: model, selection: AccountSelection(), flow: previewFlow,
-                actions: PopoverActions(), settingsView: settings
-            ).frame(width: Theme.settingsWidth, height: Theme.settingsHeight(accountCount: model.accounts.count)))
-        } else {
-            let accounts = PreviewFixtures.accounts(scenario)
-            let index = argument("--selected-account").flatMap(Int.init) ?? 0
-            let selectedID = accounts.indices.contains(index) ? accounts[index].id : accounts.first?.id
-            content = AnyView(PopoverView(
-                accounts: accounts, notice: nil,
-                now: PreviewFixtures.now, preview: true, selectedID: selectedID,
-                actions: PopoverActions()
-            ))
-        }
-        // Exercise the real borderless panel without a preview-only mask
-        // that could hide square edges in the production surface.
-        let host = NSHostingView(rootView: content)
-        let window = PopoverPanel()
-        window.setContentSize(host.fittingSize)
-        window.hasShadow = true
-        window.level = .popUpMenu
-        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
-        window.hidesOnDeactivate = false
-        // Menu material blends behind the window; keep the preview window
-        // transparent so captures show the same translucency as the popover.
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.contentView = host
-        window.isReleasedWhenClosed = false
-        window.center()
-        previewWindow = window
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        if let output = argument("--capture") {
-            DispatchQueue.main.async {
-                host.layoutSubtreeIfNeeded()
-                window.displayIfNeeded()
-                do {
-                    if CommandLine.arguments.contains("--capture-scroll-bottom") {
-                        guard self.scrollPreviewToBottom(host) else { throw CocoaError(.featureUnsupported) }
-                        host.layoutSubtreeIfNeeded()
-                        window.displayIfNeeded()
-                    }
-                    // Liquid Glass and vibrant labels are WindowServer effects;
-                    // cacheDisplay omits them and cannot verify the visible UI.
-                    let capture = Process()
-                    capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-                    capture.arguments = ["-x", "-o", "-l", String(window.windowNumber), output]
-                    capture.terminationHandler = { process in
-                        DispatchQueue.main.async {
-                            guard process.terminationStatus == 0 else {
-                                FileHandle.standardError.write(Data("Capture failed: screencapture exited \(process.terminationStatus)\n".utf8))
-                                exit(1)
-                            }
-                            print("CAPTURED \(Int(host.bounds.width))x\(Int(host.bounds.height)) \(output)")
-                            NSApp.terminate(nil)
-                        }
-                    }
-                    try capture.run()
-                } catch {
-                    FileHandle.standardError.write(Data("Capture failed: \(error.localizedDescription)\n".utf8))
-                    exit(1)
-                }
-            }
-        }
-    }
-
-    private func scrollPreviewToBottom(_ host: NSView) -> Bool {
-        var pending = [host]
-        while let view = pending.popLast() {
-            if let scroll = view as? NSScrollView, let document = scroll.documentView,
-               document.bounds.height > scroll.contentView.bounds.height + 1 {
-                let y = document.isFlipped ? max(0, document.bounds.height - scroll.contentView.bounds.height) : 0
-                scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
-                scroll.reflectScrolledClipView(scroll.contentView)
-                print("SCROLLED document=\(document.bounds.height) viewport=\(scroll.contentView.bounds.height) y=\(y)")
-                return true
-            }
-            pending.append(contentsOf: view.subviews)
-        }
-        return false
-    }
-
-    private func argument(_ key: String) -> String? {
+    func argument(_ key: String) -> String? {
         guard let index = CommandLine.arguments.firstIndex(of: key),
               index + 1 < CommandLine.arguments.count else { return nil }
         return CommandLine.arguments[index + 1]
@@ -446,7 +362,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 }
 
 /// Borderless panel that can become key so keyboard shortcuts work.
-private final class PopoverPanel: NSPanel {
+final class PopoverPanel: NSPanel {
     init() {
         super.init(
             contentRect: .zero,
@@ -461,38 +377,7 @@ private final class PopoverPanel: NSPanel {
 }
 
 if CommandLine.arguments.contains("--probe-antigravity") {
-    Task { @MainActor in
-        do {
-            let executable: URL?
-            if let index = CommandLine.arguments.firstIndex(of: "--antigravity-cli"),
-               index + 1 < CommandLine.arguments.count {
-                executable = URL(fileURLWithPath: CommandLine.arguments[index + 1])
-            } else {
-                executable = nil
-            }
-            let snapshot = try await AntigravityClient(executableURL: executable).fetchUsage()
-            struct ProbeResult: Encodable {
-                let plan: String?
-                let windows: [CodexQuotaWindow]
-                let fetchedAt: Date
-                let source: UsageSource?
-            }
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            encoder.dateEncodingStrategy = .iso8601
-            let data = try encoder.encode(ProbeResult(
-                plan: snapshot.identity.planType, windows: snapshot.windows, fetchedAt: snapshot.fetchedAt,
-                source: snapshot.source
-            ))
-            FileHandle.standardOutput.write(data)
-            FileHandle.standardOutput.write(Data("\n".utf8))
-            exit(0)
-        } catch {
-            FileHandle.standardError.write(Data("Antigravity: \(error.localizedDescription)\n".utf8))
-            exit(1)
-        }
-    }
-    RunLoop.main.run()
+    runAntigravityProbe()
 } else {
     let application = NSApplication.shared
     let delegate = ApplicationDelegate()

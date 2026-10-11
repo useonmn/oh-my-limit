@@ -26,7 +26,9 @@ service, account names distinguish separate subscriptions. No decorative motion
 or promotional copy. Native SwiftUI/AppKit, not a web surface.
 
 The menu bar uses a 14 pt monochrome provider logo followed by a 13 pt
-monospaced-digit percentage for each account, in account order. Replace numeric
+monospaced-digit percentage for at most the first two accounts, in account order.
+The image width is capped at 180 pt. Additional accounts appear as a compact `+N` count; countdowns and all accounts
+remain in the tooltip and accessibility label rather than widening the item. Replace numeric
 ordinals and the generic leading gauge when accounts exist. Render as a native
 template image so light, dark and selected menu-bar appearances remain legible.
 Account names remain available in the tooltip and accessibility label; do not
@@ -35,7 +37,7 @@ change primary-quota, stale or unknown-value rules.
 ## 2. Color
 
 The panel follows the system appearance over native Liquid Glass on macOS
-26 and later (`glassEffect(.regular)` with the 14 pt rounded panel shape).
+26 and later (`glassEffect(.regular)` with the 17 pt rounded panel shape).
 The September 21 references show wallpaper-responsive native menu surfaces;
 the legacy NSVisualEffectView `.menu` material is not an identical recipe.
 Keep that behind-window material only for supported macOS 14/15 systems.
@@ -54,10 +56,10 @@ Settings retain their adaptive system palette. No new theme toggle.
 
 ## 3. Typography
 
-System SF typography, with the system's Korean fallback. Panel roles: title 10 pt
-semibold, account 11 pt semibold, body 10 pt, caption 10 pt, detail value 10 pt
-semibold, ring percentage 14 pt semibold, ring account label 10 pt medium.
-The popover was scaled to 70% but text never goes below 10 pt.
+System SF typography, with the system's Korean fallback. Panel roles: title 11 pt
+semibold, account 12 pt semibold, body 11 pt, caption 10.5 pt, detail value 11 pt
+semibold, ring percentage 17 pt semibold, ring account label 10.5 pt medium.
+The popover is scaled to 85%; text never goes below 10.5 pt.
 Settings retain their existing type scale (title and body 12 pt).
 Percentages and countdown numbers use monospaced digits. Utility controls use small system typography. Long account names truncate with a full accessibility
 label; errors wrap instead of clipping.
@@ -65,23 +67,23 @@ label; errors wrap instead of clipping.
 ## 4. Spacing & Layout
 
 Base unit: 4 pt. Named steps: 4, 8, 12, 16, 20, 24.
-The popover uses its own 70% scale: steps 3, 6, 8, 11 pt and an 8 pt group radius.
-Popover width: 224 pt; horizontal inset 11 pt;
-outer radius 14 pt. A quiet 28 pt header provides refresh, add and settings.
-Below it, a horizontal row of 62 pt account buttons uses 40 pt rings with
-4 pt round-capped strokes, 15 pt provider marks, large percentages, account names and quota-window labels.
-Center up to three accounts in a 120 pt selector; additional accounts scroll
-horizontally in 131 pt to reserve space for native indicators. Selection has a
+The popover uses its own 85% scale: steps 4, 7, 10, 14 pt and a 10 pt group radius.
+Popover width: 272 pt; horizontal inset 14 pt;
+outer radius 17 pt. A quiet 34 pt header provides refresh, add and settings.
+Below it, a horizontal row of 75 pt account buttons uses 48 pt rings with
+5 pt round-capped strokes, 19 pt provider marks, large percentages, account names and quota-window labels.
+Center up to three accounts in a 142 pt selector; additional accounts scroll
+horizontally in 153 pt to reserve space for native indicators. Selection has a
 subtle selected fill and visible focus outline.
-Below the selector, a quiet 8 pt-radius group with 11 pt insets shows only
+Below the selector, a quiet 10 pt-radius group with 14 pt insets shows only
 the selected account: a faint fill and a hairline edge, no shadow or layered
-material. Its 202 pt outer width, rounded mask, and outer margins stay fixed
+material. Its 244 pt outer width, rounded mask, and outer margins stay fixed
 whether its content fits or overflows. Only the padded contents scroll; the
-group background and 11 pt bottom inset never scroll away.
+group background and 14 pt bottom inset never scroll away.
 Use a native overlay scrollbar inside the group so an appearing scrollbar
 does not consume content width or reflow text. Keep the indicator usable and
 inset from the rounded corners; do not change global macOS scroll preferences.
-The selector and header remain visible. Detail rows have 8 pt spacing and
+The selector and header remain visible. Detail rows have 10 pt spacing and
 4 pt progress bars.
 Spatial model: [scroll-body-shell](https://github.com/changeroa/StyleGallery/blob/main/patterns/viewport-shell/scroll-body-shell.md),
 adapted to a bounded native card rather than a web page.
@@ -89,7 +91,7 @@ Empty onboarding remains compact, with an existing-account button and service
 connection action. No disconnected refresh or permanent footer.
 Reset countdowns stay concise; complete local dates appear in tooltips.
 Measure the actual SwiftUI content, including errors and notices, and cap the
-height at 434 pt. Account selection and data changes must update native popover
+height at 527 pt. Account selection and data changes must update native popover
 sizing after published state commits. Keep `height(for:)` compatible by adding
 an optional selected ID. Settings open in the same panel at 320 pt width with a compact
 account-count-dependent height capped at 420 pt; excess content scrolls.
@@ -122,7 +124,14 @@ windows, stale data, login waiting, and errors in both appearances.
   browser login. Disable it during refresh/login; explain the macOS
   "항상 허용" choice without promising access after Keychain resets or locks.
 - `EmptyState`: brief explanation and one real connection action that opens settings.
-- `SettingsView`: show a compact connected-account list followed by one
+- `SettingsView`:
+  "로그인 시 실행" reflects the system login-item status, including pending approval.
+  The first eligible normal launch defaults on once; subsequent launches never
+  re-enable an item the user disabled. Only installed `.app` launches register:
+  unbundled executables, App Translocation, mounted `/Volumes/` locations (including
+  DMGs), previews, captures and probes never register. Normal launches delete the
+  old LaunchAgent plist without bootout. The toggle is disabled in ineligible runs.
+  Show a compact connected-account list followed by one
   provider's connection actions, chosen with a segmented control. Do not stack
   every service's setup instructions in the same viewport. Codex and Claude
   offer only the browser login. Antigravity's direct login is primary; its
@@ -134,6 +143,8 @@ windows, stale data, login waiting, and errors in both appearances.
   "사용률" context so percentages are not mistaken for remaining allowance,
   refresh/add controls, and a settings menu containing settings and quit. Refresh
   retains its disabled/loading state and Command-R; quit retains Command-Q.
+  The title and usage/preview context share a two-line label in the quiet header,
+  with refresh, a separate add button and settings controls alongside.
 - Account login and login cancellation use the adaptive
   macOS link color so they remain distinct from disabled metadata in both appearances.
 
@@ -142,6 +153,13 @@ windows, stale data, login waiting, and errors in both appearances.
 Use native button, menu, popover, and progress behavior. No decorative movement.
 Do not animate progress changes across a quota reset. Honor system reduced-motion
 settings. Clicking a ring changes selection immediately without a network request.
+Accounts can also move left/right through ring context menus, VoiceOver actions
+and the keyboard-reachable settings account menu. Boundary actions are disabled.
+Panel dismissal follows outside clicks, app deactivation and Space changes.
+The nonactivating panel preserves the previously frontmost application; closing
+returns focus only if another application has not already taken it.
+One delegate-owned height drives the SwiftUI frame and panel, measured on
+committed data, selection, notice and mode changes and every 30 seconds.
 Selection survives refresh and reordering; removing it falls back to the first
 remaining account. Newly added/login accounts are selected so cancellation stays
 reachable. Account login opens the official URL only after the user chooses login.
@@ -157,7 +175,7 @@ Borderless NSPanel backed by one native Liquid Glass surface on macOS 26+,
 with the legacy behind-window menu material on macOS 14/15.
 The OS owns refraction, blur and the outer edge; do not paint an imitation
 gradient or stack a second material beneath it. Clip the complete surface to
-the same 14 pt continuous rounded shape, including in the real borderless
+the same 17 pt continuous rounded shape, including in the real borderless
 panel, so the hosting view cannot leave square corner edges. Chrome stays
 flat: icon triggers are plain borderless symbols, grouped content sits in a
 faint fill with a hairline edge, and ring selection is a flat selected-content

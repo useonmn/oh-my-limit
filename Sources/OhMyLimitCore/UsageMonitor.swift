@@ -58,6 +58,7 @@ public final class UsageMonitor: ObservableObject {
     private var generations: [UUID: UUID] = [:]
     private var retryDates: [UUID: Date] = [:]
     private var failures: [UUID: Int] = [:]
+    private var previousLoginIdentities: [UUID: CodexIdentity] = [:]
     private var configurationReadable = true
 
     private struct CachedSnapshot: Codable {
@@ -104,6 +105,7 @@ public final class UsageMonitor: ObservableObject {
                 let file = store.directory.appendingPathComponent("snapshots/\(profile.id.uuidString).json")
                 if FileManager.default.fileExists(atPath: file.path) {
                     do {
+                        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
                         let cached = try JSONDecoder().decode(CachedSnapshot.self, from: Data(contentsOf: file))
                         if cached.homePath == profile.homePath,
                            (cached.provider ?? .codex) == profile.provider,
@@ -244,6 +246,7 @@ public final class UsageMonitor: ObservableObject {
             try store.save(accounts.filter { $0.id != id }.map(\.profile))
             cancel(id)
             accounts.removeAll { $0.id == id }
+            invalidateCache(id)
             retryDates[id] = nil
             failures[id] = nil
         } catch {
@@ -293,6 +296,7 @@ public final class UsageMonitor: ObservableObject {
             if let generation { draining[generation] = (id, task) }
             task.cancel()
         }
+        restoreLoginIdentity(id)
         update(id) {
             $0.isRefreshing = false
             $0.isLoggingIn = false
@@ -417,9 +421,11 @@ public final class UsageMonitor: ObservableObject {
         let pending = draining.values.filter { $0.id == id }.map(\.task)
         var profiles = accounts.map(\.profile)
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { return nil }
+        let previousIdentity = profiles[index].oauthIdentity
         profiles[index].oauthIdentity = nil
         do { try store.save(profiles) }
         catch { notice = error.localizedDescription; return nil }
+        previousLoginIdentities[id] = previousIdentity
         update(id) { $0.profile.oauthIdentity = nil }
         let generation = UUID()
         generations[id] = generation
@@ -435,9 +441,8 @@ public final class UsageMonitor: ObservableObject {
                 for task in pending { await task.value }
                 try Task.checkCancellation()
                 let snapshot: CodexUsageSnapshot
-                var profile = state.profile
                 let identity: CodexIdentity
-                switch profile.provider {
+                switch state.profile.provider {
                 case .antigravity:
                     identity = try await directAntigravity.login(profileID: id, onURL: onURL)
                 case .codex:
@@ -446,6 +451,8 @@ public final class UsageMonitor: ObservableObject {
                     identity = try await directClaude.login(profileID: id, onURL: onURL)
                 }
                 guard !Task.isCancelled, let self, self.generations[id] == generation else { return }
+                self.previousLoginIdentities[id] = nil
+                guard var profile = self.accounts.first(where: { $0.id == id })?.profile else { return }
                 profile.oauthIdentity = identity
                 try self.store.save(self.accounts.map { $0.id == id ? profile : $0.profile })
                 self.update(id) {
@@ -472,16 +479,31 @@ public final class UsageMonitor: ObservableObject {
                 self.cache(snapshot, profile: profile)
             } catch {
                 guard !Task.isCancelled, let self, self.generations[id] == generation else { return }
+                let authenticated = self.accounts.first(where: { $0.id == id })?.profile.oauthIdentity != nil
+                self.restoreLoginIdentity(id)
                 self.update(id) {
                     $0.error = error.localizedDescription
                     $0.needsKeychainAccess = (error as? CodexOAuthError)?.needsKeychainAccess == true
                         || (error as? AntigravityOAuthError)?.needsKeychainAccess == true
                         || (error as? ClaudeOAuthError)?.needsKeychainAccess == true
                 }
+                if authenticated {
+                    let count = min((self.failures[id] ?? 0) + 1, 5)
+                    self.failures[id] = count
+                    self.retryDates[id] = self.clock().addingTimeInterval(min(60 * pow(2, Double(count - 1)), 900))
+                }
             }
         }
         operations[id] = task
         return task
+    }
+
+    private func restoreLoginIdentity(_ id: UUID) {
+        guard let identity = previousLoginIdentities.removeValue(forKey: id),
+              accounts.contains(where: { $0.id == id }) else { return }
+        update(id) { $0.profile.oauthIdentity = identity }
+        do { try store.save(accounts.map(\.profile)) }
+        catch { notice = error.localizedDescription }
     }
 
     private func update(_ id: UUID, _ body: (inout AccountState) -> Void) {
@@ -503,16 +525,14 @@ public final class UsageMonitor: ObservableObject {
     private func cache(_ snapshot: CodexUsageSnapshot, profile: AccountProfile) {
         do {
             let folder = store.directory.appendingPathComponent("snapshots", isDirectory: true)
-            try FileManager.default.createDirectory(
-                at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]
-            )
+            try AccountStore.preparePrivateDirectory(store.directory)
+            try AccountStore.preparePrivateDirectory(folder)
             let file = folder.appendingPathComponent("\(profile.id.uuidString).json")
-            try JSONEncoder().encode(CachedSnapshot(
+            let data = try JSONEncoder().encode(CachedSnapshot(
                 homePath: profile.homePath, snapshot: snapshot, provider: profile.provider,
                 authentication: profile.authentication
             ))
-                .write(to: file, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            try AccountStore.writePrivate(data, to: file)
         } catch {
             notice = "사용량은 조회했지만 로컬 캐시를 저장하지 못했습니다."
         }

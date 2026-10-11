@@ -1,8 +1,70 @@
 import Foundation
+import Security
 import Testing
 @testable import OhMyLimitCore
 
 @Suite struct CodexOAuthClientTests {
+    @Test(arguments: [Double?.none, 0, -1, .infinity, .nan, 31_536_001])
+    func tokenLifetimeMustBePresentFiniteAndBounded(_ lifetime: Double?) {
+        let tokens = CodexOAuthClient.TokenResponse(
+            access_token: "a", refresh_token: "r", id_token: nil, expires_in: lifetime
+        )
+        #expect(throws: CodexOAuthError.invalidResponse) {
+            try CodexOAuthClient.credentials(from: tokens, previous: codexCredentials())
+        }
+    }
+
+    @Test func expiryUsesRequestStartAndRefreshCannotSwitchAccounts() throws {
+        let issued = Date(timeIntervalSince1970: 1_789_400_000)
+        let tokens = CodexOAuthClient.TokenResponse(
+            access_token: "a", refresh_token: "r", id_token: nil, expires_in: 120
+        )
+        #expect(try CodexOAuthClient.credentials(from: tokens, previous: codexCredentials(),
+                                                issuedAt: issued).expiresAt == issued.addingTimeInterval(120))
+        let switched = CodexOAuthClient.TokenResponse(
+            access_token: "a", refresh_token: "r",
+            id_token: codexJWT(email: "other@example.invalid", accountID: "other", plan: "pro"), expires_in: 120
+        )
+        #expect(throws: CodexOAuthError.invalidResponse) {
+            try CodexOAuthClient.credentials(from: switched, previous: codexCredentials(), issuedAt: issued)
+        }
+    }
+
+    @Test func randomFailureNeverProducesPredictableState() {
+        #expect(throws: AntigravityOAuthError.callbackUnavailable) {
+            try OAuthPKCE.randomURLSafe(fill: { _ in errSecNotAvailable })
+        }
+    }
+
+    @Test func sharedCallbackErrorsAreMappedToCodex() {
+        #expect(CodexOAuthClient.callbackError(.userCancelled) == .userCancelled)
+        #expect(CodexOAuthClient.callbackError(.timedOut) == .timedOut)
+        #expect(CodexOAuthClient.callbackError(.invalidResponse) == .invalidResponse)
+        #expect(CodexOAuthClient.callbackError(.networkFailure) == .callbackUnavailable)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func browserDenialUsesCodexError() async throws {
+        let client = CodexOAuthClient(issuer: "https://issuer.invalid", clientID: "fixture", transport: { _ in
+            Issue.record("Denied login must not exchange a code")
+            throw CodexOAuthError.invalidResponse
+        })
+        let urls = AsyncStream<URL>.makeStream()
+        let task = Task {
+            defer { urls.continuation.finish() }
+            return try await client.login { urls.continuation.yield($0) }
+        }
+        defer { task.cancel() }
+        var iterator = urls.stream.makeAsyncIterator()
+        let url = try #require(await iterator.next())
+        let fields = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
+        let redirect = try #require(fields.first { $0.name == "redirect_uri" }?.value.flatMap(URL.init(string:)))
+        let state = try #require(fields.first { $0.name == "state" }?.value)
+        _ = try await oauthRawRequest(redirect, fragments: [
+            "GET /auth/callback?state=\(state)&error=access_denied HTTP/1.1\r\n\r\n"
+        ])
+        await #expect(throws: CodexOAuthError.userCancelled) { try await task.value }
+    }
+
     @Test func authorizeURLUsesBrowserLoginParameters() throws {
         let redirect = URL(string: "http://localhost:1455/auth/callback")!
         let url = try #require(CodexOAuthClient.authorizeURL(
@@ -33,11 +95,6 @@ import Testing
         })
         let snapshot = try await client.fetchUsage(codexCredentials())
         #expect(snapshot.windows.map(\.id) == ["codex.primary"])
-    }
-
-    @Test func pkceChallengeMatchesRFC7636Vector() {
-        #expect(CodexOAuthClient.codeChallenge(verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
-            == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
     }
 
     @Test func credentialsParseIdentityFromIDToken() throws {
@@ -118,6 +175,35 @@ import Testing
 }
 
 @Suite struct CodexRemoteParserTests {
+    @Test func extraIDsAreUniqueAndNeverMasqueradeAsMainQuota() throws {
+        let body = """
+        {"additional_rate_limits":[
+          {"rate_limit":{"primary_window":{"used_percent":1}}},
+          {"rate_limit":{"primary_window":{"used_percent":2}}},
+          {"metered_feature":"codex","rate_limit":{"primary_window":{"used_percent":3}}},
+          {"metered_feature":"codex","rate_limit":{"primary_window":{"used_percent":4}}}
+        ]}
+        """
+        let windows = try CodexRemoteParser.usage(from: Data(body.utf8), credentials: codexCredentials()).windows
+        #expect(windows.count == 4)
+        #expect(Set(windows.map(\.id)).count == 4)
+        #expect(windows.allSatisfy { $0.id.hasPrefix("extra.") && !$0.id.hasPrefix("codex.") })
+    }
+
+    @Test(arguments: ["", #""used_percent":null,"#, #""used_percent":"bad","#,
+                       #""used_percent":-1,"#, #""used_percent":true,"#])
+    func missingOrInvalidUsageRemainsAnUnknownWeeklyWindow(_ field: String) throws {
+        let body = """
+        {"rate_limit":{"secondary_window":{\(field)"limit_window_seconds":604800}}}
+        """
+        let windows = try CodexRemoteParser.usage(from: Data(body.utf8), credentials: codexCredentials()).windows
+        #expect(windows.count == 1)
+        #expect(windows[0].id == "codex.secondary")
+        #expect(windows[0].windowDurationMins == 10_080)
+        #expect(!windows[0].usageKnown)
+        #expect(windows[0].usedPercent == 0)
+    }
+
     @Test func usageMapsWindowsCreditsAndIdentity() throws {
         let body = """
         {"plan_type":"pro","account_id":"acct-9",
@@ -144,7 +230,7 @@ import Testing
         let secondary = try #require(snapshot.windows.first { $0.id == "codex.secondary" })
         #expect(secondary.windowDurationMins == 10_080)
         #expect(secondary.label == "주간")
-        let extra = try #require(snapshot.windows.first { $0.id == "codex_other.primary" })
+        let extra = try #require(snapshot.windows.first { $0.id == "extra.0.codex_other.primary" })
         #expect(extra.label == "GPT-5.6")
         #expect(snapshot.credits == "12.5")
         #expect(snapshot.ordinaryUsageAllowed == true)

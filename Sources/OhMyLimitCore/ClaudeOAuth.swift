@@ -1,5 +1,4 @@
 import Foundation
-import LocalAuthentication
 import Security
 
 /// Public installed-app client configuration used by Claude Code's claude.ai login.
@@ -69,7 +68,7 @@ public struct ClaudeOAuthClient: Sendable {
     private let transport: Transport
 
     public init() {
-        self.init(transport: CodexOAuthHTTPS.send)
+        self.init(transport: { try await OAuthHTTPS.send($0, invalidResponse: ClaudeOAuthError.invalidResponse) })
     }
 
     init(transport: @escaping Transport) {
@@ -78,9 +77,13 @@ public struct ClaudeOAuthClient: Sendable {
 
     public func login(onURL: @escaping @Sendable (URL) -> Void) async throws -> ClaudeOAuthCredentials {
         try Task.checkCancellation()
-        let state = CodexOAuthClient.randomURLSafe(byteCount: 32)
-        let verifier = CodexOAuthClient.randomURLSafe(byteCount: 32)
-        let challenge = CodexOAuthClient.codeChallenge(verifier: verifier)
+        let state: String
+        let verifier: String
+        do {
+            state = try OAuthPKCE.randomURLSafe()
+            verifier = try OAuthPKCE.randomURLSafe()
+        } catch { throw ClaudeOAuthError.callbackUnavailable }
+        let challenge = OAuthPKCE.challenge(verifier)
         let callback: AntigravityOAuthCallback
         do {
             callback = try AntigravityOAuthCallback(
@@ -213,81 +216,32 @@ public struct ClaudeOAuthClient: Sendable {
 /// Keychain persistence for this app's own Claude credentials. Claude Code's
 /// Keychain item and credential file are never read or written here.
 public struct ClaudeOAuthKeychain: Sendable {
-    private let service: String
-    private let security: any AntigravityOAuthSecurity
+    let store: OAuthKeychain<ClaudeOAuthCredentials>
 
     public init(service: String = "local.ohmylimit.claude.oauth") {
-        self.init(service: service, security: OAuthSystemSecurity())
+        store = OAuthKeychain(service: service, security: OAuthSystemSecurity())
     }
 
     init(service: String, security: any AntigravityOAuthSecurity) {
-        self.service = service
-        self.security = security
+        store = OAuthKeychain(service: service, security: security)
     }
 
     public func load(profileID: UUID, allowInteraction: Bool = false) throws -> ClaudeOAuthCredentials? {
-        var query = query(profileID: profileID, allowInteraction: allowInteraction)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        let (status, data) = security.copyMatching(query)
-        switch status {
-        case errSecSuccess:
-            guard let data, data.count <= 65_536,
-                  let credentials = try? JSONDecoder().decode(ClaudeOAuthCredentials.self, from: data),
-                  ClaudeOAuthClient.valid(credentials) else { return nil }
-            return credentials
-        case errSecItemNotFound: return nil
-        default: throw ClaudeOAuthError.storageFailure(status)
-        }
+        try store.load(profileID: profileID, allowInteraction: allowInteraction)
     }
 
     public func save(_ credentials: ClaudeOAuthCredentials, profileID: UUID, allowInteraction: Bool = false) throws {
-        guard ClaudeOAuthClient.valid(credentials),
-              let data = try? JSONEncoder().encode(credentials) else { throw ClaudeOAuthError.invalidResponse }
-        let query = query(profileID: profileID, allowInteraction: allowInteraction)
-        // Update in place: a failed save must not first destroy a working refresh token.
-        var status = security.update(query, attributes: [kSecValueData as String: data])
-        if status == errSecItemNotFound {
-            var attributes = query
-            attributes[kSecValueData as String] = data
-            status = security.add(attributes)
-            // Another instance may have added this same profile between update and add.
-            if status == errSecDuplicateItem {
-                status = security.update(query, attributes: [kSecValueData as String: data])
-            }
-        }
-        guard status == errSecSuccess else { throw ClaudeOAuthError.storageFailure(status) }
+        try store.save(credentials, profileID: profileID, allowInteraction: allowInteraction)
     }
 
     public func remove(profileID: UUID, allowInteraction: Bool = false) throws {
-        let status = security.delete(query(profileID: profileID, allowInteraction: allowInteraction))
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw ClaudeOAuthError.storageFailure(status)
-        }
-    }
-
-    private func query(profileID: UUID, allowInteraction: Bool) -> [String: Any] {
-        // This non-sandboxed macOS app uses the login Keychain.
-        let context = LAContext()
-        context.interactionNotAllowed = !allowInteraction
-        return [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: profileID.uuidString,
-            kSecAttrSynchronizable as String: false,
-            kSecUseDataProtectionKeychain as String: false,
-            kSecUseAuthenticationContext as String: context
-        ]
+        try store.remove(profileID: profileID, allowInteraction: allowInteraction)
     }
 }
 
 /// Owns this app's Claude credentials only; direct accounts never fall back to Claude Code's login.
 public struct ClaudeDirectClient: Sendable {
-    private let keychain: ClaudeOAuthKeychain
-    private let authenticate: @Sendable (@escaping @Sendable (URL) -> Void) async throws -> ClaudeOAuthCredentials
-    private let renew: @Sendable (ClaudeOAuthCredentials) async throws -> ClaudeOAuthCredentials
-    private let fetch: @Sendable (ClaudeOAuthCredentials) async throws -> CodexUsageSnapshot
-    private let clock: @Sendable () -> Date
+    private let flow: OAuthDirectFlow<ClaudeOAuthCredentials>
 
     public init() {
         self.init(
@@ -305,55 +259,21 @@ public struct ClaudeDirectClient: Sendable {
         fetch: @escaping @Sendable (ClaudeOAuthCredentials) async throws -> CodexUsageSnapshot,
         clock: @escaping @Sendable () -> Date = { Date() }
     ) {
-        self.keychain = keychain
-        self.authenticate = authenticate
-        self.renew = renew
-        self.fetch = fetch
-        self.clock = clock
+        flow = OAuthDirectFlow(keychain: keychain.store, authenticate: authenticate, renew: renew,
+                               fetch: fetch, isUnauthorized: { ($0 as? ClaudeClientError) == .unauthorized }, clock: clock)
     }
 
     public func login(profileID: UUID, onURL: @escaping @Sendable (URL) -> Void) async throws -> CodexIdentity {
-        try Task.checkCancellation()
-        let credentials = try await authenticate(onURL)
-        try Task.checkCancellation()
-        let previous = try keychain.load(profileID: profileID, allowInteraction: true)
-        try Task.checkCancellation()
-        try keychain.save(credentials, profileID: profileID, allowInteraction: true)
-        // The monitor drains this operation before starting another for this profile.
-        // A cancelled save must not replace an existing account's credentials.
-        if Task.isCancelled {
-            if let previous { try keychain.save(previous, profileID: profileID, allowInteraction: true) }
-            else { try keychain.remove(profileID: profileID, allowInteraction: true) }
-            throw CancellationError()
-        }
-        return credentials.identity
+        try await flow.login(profileID: profileID, onURL: onURL)
     }
 
     public func fetchUsage(
         profile: AccountProfile, allowKeychainInteraction: Bool = false
     ) async throws -> CodexUsageSnapshot {
-        try Task.checkCancellation()
-        guard let accountID = profile.oauthIdentity?.accountID,
-              var credentials = try keychain.load(profileID: profile.id, allowInteraction: allowKeychainInteraction),
-              credentials.accountID == accountID else { throw ClaudeOAuthError.signInRequired }
-        let needsRenewal = credentials.expiresAt <= clock().addingTimeInterval(60)
-        if needsRenewal {
-            credentials = try await renew(credentials)
-            try keychain.save(credentials, profileID: profile.id, allowInteraction: allowKeychainInteraction)
-        }
-        try Task.checkCancellation()
-        do {
-            return try await fetch(credentials)
-        } catch ClaudeClientError.unauthorized where !needsRenewal {
-            // A server-rejected token may expire before its advertised timestamp.
-            credentials = try await renew(credentials)
-            try keychain.save(credentials, profileID: profile.id, allowInteraction: allowKeychainInteraction)
-            try Task.checkCancellation()
-            return try await fetch(credentials)
-        }
+        try await flow.fetchUsage(profile: profile, allowKeychainInteraction: allowKeychainInteraction)
     }
 
     public func disconnect(profileID: UUID) async throws {
-        try keychain.remove(profileID: profileID, allowInteraction: true)
+        try await flow.disconnect(profileID: profileID)
     }
 }

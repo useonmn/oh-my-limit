@@ -72,6 +72,18 @@ enum CodexRemoteParser {
             let used_percent: Double?
             let limit_window_seconds: Int?
             let reset_at: Int?
+
+            enum CodingKeys: String, CodingKey {
+                case used_percent, limit_window_seconds, reset_at
+            }
+
+            init(from decoder: any Decoder) throws {
+                let fields = try decoder.container(keyedBy: CodingKeys.self)
+                // Malformed usage remains an unknown window, not a missing row.
+                used_percent = try? fields.decode(Double.self, forKey: .used_percent)
+                limit_window_seconds = try fields.decodeIfPresent(Int.self, forKey: .limit_window_seconds)
+                reset_at = try fields.decodeIfPresent(Int.self, forKey: .reset_at)
+            }
         }
         struct Credits: Decodable {
             let has_credits: Bool?
@@ -91,9 +103,9 @@ enum CodexRemoteParser {
         }
         var windows: [CodexQuotaWindow] = []
         appendWindows(from: payload.rate_limit, key: "codex", limitName: nil, into: &windows)
-        for extra in payload.additional_rate_limits ?? [] {
-            appendWindows(from: extra.rate_limit, key: extra.metered_feature ?? "extra",
-                          limitName: extra.limit_name, into: &windows)
+        for (index, extra) in (payload.additional_rate_limits ?? []).enumerated() {
+            appendWindows(from: extra.rate_limit, key: "extra.\(index).\(extra.metered_feature ?? "unnamed")",
+                          limitName: extra.limit_name ?? extra.metered_feature ?? "추가 한도", into: &windows)
         }
         guard !windows.isEmpty else { throw CodexOAuthError.invalidResponse }
         let credits = payload.credits.flatMap { credits -> String? in
@@ -117,9 +129,9 @@ enum CodexRemoteParser {
                                       limitName: String?, into windows: inout [CodexQuotaWindow]) {
         guard let details else { return }
         for (slot, window) in [("primary", details.primary_window), ("secondary", details.secondary_window)] {
-            guard let window, let used = window.used_percent,
-                  used.isFinite, used >= 0 else { continue }
-            let minutes = window.limit_window_seconds.flatMap { $0 > 0 ? ($0 + 59) / 60 : nil }
+            guard let window else { continue }
+            let used = window.used_percent.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+            let minutes = window.limit_window_seconds.flatMap { $0 > 0 ? $0 / 60 + ($0 % 60 == 0 ? 0 : 1) : nil }
             let label: String
             if key == "codex" {
                 switch minutes {
@@ -131,9 +143,10 @@ enum CodexRemoteParser {
                 label = limitName ?? key
             }
             windows.append(CodexQuotaWindow(
-                id: "\(key).\(slot)", label: label, usedPercent: used,
+                id: "\(key).\(slot)", label: label, usedPercent: used ?? 0,
                 windowDurationMins: minutes,
-                resetsAt: window.reset_at.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+                resetsAt: window.reset_at.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                usageKnown: used != nil
             ))
         }
     }

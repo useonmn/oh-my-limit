@@ -5,6 +5,69 @@ import Testing
 @testable import OhMyLimitCore
 
 @Suite(.serialized) struct AntigravityOAuthKeychainTests {
+    @Test(.timeLimit(.minutes(1)))
+    func pendingPromptRejectsBackgroundAccessAndSerializesInteractiveCalls() async throws {
+        let entered = AsyncStream<Void>.makeStream()
+        let attempted = AsyncStream<Void>.makeStream()
+        let release = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        let first = Task {
+            await securityOperation(interactive: true) {
+                entered.continuation.yield(())
+                #expect(release.wait(timeout: .now() + 5) == .success)
+                finished.signal()
+                return errSecSuccess
+            }
+        }
+        var entries = entered.stream.makeAsyncIterator()
+        _ = await entries.next()
+        let second = Task {
+            await securityOperation(interactive: true, before: { attempted.continuation.yield(()) }) {
+                // This call may enter only after the first operation returned.
+                #expect(finished.wait(timeout: .now()) == .success)
+                return errSecSuccess
+            }
+        }
+        var attempts = attempted.stream.makeAsyncIterator()
+        _ = await attempts.next()
+        let background = await securityOperation(interactive: false) {
+            Issue.record("Noninteractive operation entered while a prompt was pending")
+            return errSecSuccess
+        }
+        #expect(background == errSecInteractionNotAllowed)
+        release.signal()
+        #expect(await first.value == errSecSuccess)
+        #expect(await second.value == errSecSuccess)
+        entered.continuation.finish()
+        attempted.continuation.finish()
+    }
+
+    @Test(arguments: [AccountProvider.codex, .claude, .antigravity], [false, true])
+    func everyProviderRejectsCorruptOrOversizedItems(_ provider: AccountProvider, _ oversized: Bool) async throws {
+        let security = OAuthFakeSecurity()
+        // Identical credential field names preserve installed JSON readability;
+        // valid JSON with an oversized email must hit the size cap, not decoding.
+        security.dataOverride = oversized ? try JSONEncoder().encode(CodexOAuthCredentials(
+            accessToken: "access", refreshToken: "refresh", expiresAt: Date(timeIntervalSince1970: 1_900_000_000),
+            accountID: "acct", email: String(repeating: "a", count: 65_536)
+        )) : Data("not credentials".utf8)
+        let id = UUID()
+        switch provider {
+        case .codex:
+            #expect(throws: CodexOAuthError.invalidResponse) {
+                try CodexOAuthKeychain(service: "fixture", security: security).load(profileID: id)
+            }
+        case .claude:
+            #expect(throws: ClaudeOAuthError.invalidResponse) {
+                try ClaudeOAuthKeychain(service: "fixture", security: security).load(profileID: id)
+            }
+        case .antigravity:
+            await #expect(throws: AntigravityOAuthError.invalidResponse) {
+                try await AntigravityOAuthKeychain(service: "fixture", security: security).load(profileID: id)
+            }
+        }
+    }
+
     @Test func legacyInteractionFlagIsDisabledOnlyDuringOperationAndRestoredOnFailure() {
         var previous: DarwinBoolean = false
         #expect(SecKeychainGetUserInteractionAllowed(&previous) == errSecSuccess)
@@ -180,12 +243,27 @@ import Testing
     }
 }
 
+private func securityOperation(interactive: Bool, before: @escaping @Sendable () -> Void = {},
+                               operation: @escaping @Sendable () -> OSStatus) async -> OSStatus {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global().async {
+            let context = LAContext()
+            context.interactionNotAllowed = !interactive
+            before()
+            continuation.resume(returning: OAuthSystemSecurity.perform(
+                [kSecUseAuthenticationContext as String: context], operation: operation
+            ))
+        }
+    }
+}
+
 /// Models Security's add/update/not-found behavior without touching the user's Keychain.
 final class OAuthFakeSecurity: AntigravityOAuthSecurity, @unchecked Sendable {
     private let lock = NSLock()
     private var items: [String: Data] = [:]
     private var failure: OSStatus = errSecSuccess
     private var corrupted = false
+    private var overriddenData: Data?
     private var deletes = 0
     private var authorizationRequired = false
     private var interactions = 0
@@ -206,6 +284,7 @@ final class OAuthFakeSecurity: AntigravityOAuthSecurity, @unchecked Sendable {
     var interactionPolicies: [Bool] { lock.withLock { policies } }
     var status: OSStatus { get { lock.withLock { failure } } set { lock.withLock { failure = newValue } } }
     var corrupt: Bool { get { lock.withLock { corrupted } } set { lock.withLock { corrupted = newValue } } }
+    var dataOverride: Data? { get { lock.withLock { overriddenData } } set { lock.withLock { overriddenData = newValue } } }
     var deleteCount: Int { lock.withLock { deletes } }
 
     private func authorizationStatus(_ query: [String: Any]) -> OSStatus {
@@ -246,6 +325,7 @@ final class OAuthFakeSecurity: AntigravityOAuthSecurity, @unchecked Sendable {
             let authorization = authorizationStatus(query)
             if authorization != errSecSuccess { return (authorization, nil) }
             if failure != errSecSuccess { return (failure, nil) }
+            if let overriddenData { return (errSecSuccess, overriddenData) }
             if corrupted { return (errSecSuccess, Data("not credentials".utf8)) }
             guard let data = items[key] else { return (errSecItemNotFound, nil) }
             return (errSecSuccess, data)

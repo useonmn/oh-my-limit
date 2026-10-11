@@ -4,7 +4,7 @@ import Darwin
 /// One owned, noninteractive process. Queue ownership covers all mutable state and descriptors.
 final class AntigravityCommand: @unchecked Sendable {
     private let queue = DispatchQueue(label: "OhMyLimit.AntigravityCommand")
-    private let process = Process()
+    private var pid: pid_t = 0
     private let stdout = Pipe()
     private let stderr = Pipe()
     private var readers: [DispatchSourceRead] = []
@@ -53,28 +53,56 @@ final class AntigravityCommand: @unchecked Sendable {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("OhMyLimit-agy-\(UUID())")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
             self.directory = directory
-            process.currentDirectoryURL = directory
-            process.executableURL = executable
-            process.arguments = arguments
             // Keep only launch essentials. No inherited injected OAuth/agent/project configuration.
             let environment = ProcessInfo.processInfo.environment
-            process.environment = ["HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+            let controlled = ["HOME": FileManager.default.homeDirectoryForCurrentUser.path,
                 "PATH": environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8", "CI": "1", "NO_COLOR": "1"]
-            process.standardInput = FileHandle.nullDevice
-            process.standardOutput = stdout
-            process.standardError = stderr
-            process.terminationHandler = { [weak self] _ in
-                guard let self else { return }
-                self.queue.async { self.didExit() }
-            }
-            try process.run()
+            try spawn(executable: executable, arguments: arguments, environment: controlled, directory: directory)
             started = true
+            let child = pid
+            // Observe exit WITHOUT reaping. The zombie leader pins the pid/pgid
+            // until the queue has killed remaining helpers, so a delayed signal
+            // can never hit a reused pid or a different process group.
+            DispatchQueue.global(qos: .utility).async {
+                var info = siginfo_t()
+                var status: Int32
+                repeat { status = waitid(P_PID, id_t(child), &info, WEXITED | WNOWAIT) }
+                while status == -1 && errno == EINTR
+                let owned = status == 0
+                self.queue.async { self.didExit(owned: owned) }
+            }
             stdout.fileHandleForWriting.closeFile()
             stderr.fileHandleForWriting.closeFile()
             readers.append(try reader(stdout.fileHandleForReading, isError: false))
             readers.append(try reader(stderr.fileHandleForReading, isError: true))
             timer = deadline(timeout) { self.finish(.failure(AntigravityClientError.timedOut)) }
         } catch { finish(.failure(AntigravityClientError.launchFailed)) }
+    }
+
+    private func spawn(executable: URL, arguments: [String], environment: [String: String], directory: URL) throws {
+        var actions: posix_spawn_file_actions_t?
+        var attributes: posix_spawnattr_t?
+        guard posix_spawn_file_actions_init(&actions) == 0 else { throw AntigravityClientError.launchFailed }
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        guard posix_spawnattr_init(&attributes) == 0 else { throw AntigravityClientError.launchFailed }
+        defer { posix_spawnattr_destroy(&attributes) }
+        let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)
+        guard posix_spawnattr_setflags(&attributes, flags) == 0,
+              posix_spawnattr_setpgroup(&attributes, 0) == 0,
+              posix_spawn_file_actions_addchdir_np(&actions, directory.path) == 0,
+              posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0) == 0,
+              posix_spawn_file_actions_adddup2(&actions, stdout.fileHandleForWriting.fileDescriptor, STDOUT_FILENO) == 0,
+              posix_spawn_file_actions_adddup2(&actions, stderr.fileHandleForWriting.fileDescriptor, STDERR_FILENO) == 0
+        else { throw AntigravityClientError.launchFailed }
+        var argv = ([executable.path] + arguments).map { strdup($0) } + [nil]
+        var envp = environment.keys.sorted().map { strdup("\($0)=\(environment[$0]!)") } + [nil]
+        defer {
+            argv.compactMap { $0 }.forEach { free($0) }
+            envp.compactMap { $0 }.forEach { free($0) }
+        }
+        guard posix_spawn(&pid, executable.path, &actions, &attributes, &argv, &envp) == 0 else {
+            throw AntigravityClientError.launchFailed
+        }
     }
 
     private func reader(_ handle: FileHandle, isError: Bool) throws -> DispatchSourceRead {
@@ -114,13 +142,21 @@ final class AntigravityCommand: @unchecked Sendable {
         return result != nil
     }
 
-    private func didExit() {
+    private func didExit(owned: Bool) {
+        var status: Int32 = -1
+        if owned {
+            // This is the last group signal and always precedes our only reap.
+            kill(-pid, SIGKILL)
+            var reaped: pid_t
+            repeat { reaped = waitpid(pid, &status, 0) } while reaped == -1 && errno == EINTR
+            if reaped != pid { status = -1 }
+        }
         exited = true
         // Exit notification can precede dispatch-read delivery. Drain final bytes before resolving.
         if result == nil {
             if !stdoutEOF { _ = drain(stdout.fileHandleForReading.fileDescriptor, isError: false) }
             if !stderrEOF { _ = drain(stderr.fileHandleForReading.fileDescriptor, isError: true) }
-            finish(process.terminationStatus == 0 ? .success(output) : .failure(AntigravityClientError.processFailed))
+            finish(status == 0 ? .success(output) : .failure(AntigravityClientError.processFailed))
         }
         complete()
     }
@@ -133,9 +169,9 @@ final class AntigravityCommand: @unchecked Sendable {
         readers.forEach { $0.cancel() }
         readers.removeAll()
         if started && !exited {
-            if process.isRunning { process.terminate() }
+            kill(-pid, SIGTERM)
             killTimer = deadline(0.1) {
-                if !self.exited { kill(self.process.processIdentifier, SIGKILL) }
+                if !self.exited { kill(-self.pid, SIGKILL) }
             }
         } else { complete() }
     }
@@ -144,7 +180,6 @@ final class AntigravityCommand: @unchecked Sendable {
         guard (!started || exited), var result, let continuation else { return }
         killTimer?.cancel()
         killTimer = nil
-        process.terminationHandler = nil
         self.continuation = nil
         if !started {
             stdout.fileHandleForReading.closeFile(); stdout.fileHandleForWriting.closeFile()

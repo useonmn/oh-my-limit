@@ -1,6 +1,4 @@
-import CryptoKit
 import Foundation
-import Security
 
 /// ChatGPT OAuth login for Codex accounts, without the codex CLI.
 /// Mirrors the CLI's own flow: PKCE + a loopback callback on the registered
@@ -26,21 +24,29 @@ public struct CodexOAuthClient: Sendable {
     /// the loopback callback, exchanges the code, and returns credentials.
     public func login(onURL: @escaping @Sendable (URL) -> Void) async throws -> CodexOAuthCredentials {
         try Task.checkCancellation()
-        let state = Self.randomURLSafe(byteCount: 32)
-        let verifier = Self.randomURLSafe(byteCount: 32)
-        let challenge = Self.codeChallenge(verifier: verifier)
-        let callback = try AntigravityOAuthCallback(
-            state: state,
-            ports: CodexOAuthConfiguration.callbackPorts,
-            path: CodexOAuthConfiguration.callbackPath,
-            redirectHost: "localhost"
-        )
-        let code = try await callback.wait { redirect in
-            guard let url = Self.authorizeURL(
-                issuer: self.issuer, clientID: self.clientID,
-                redirect: redirect, state: state, challenge: challenge
-            ) else { return }
-            onURL(url)
+        let state: String
+        let verifier: String
+        do {
+            state = try OAuthPKCE.randomURLSafe()
+            verifier = try OAuthPKCE.randomURLSafe()
+        } catch { throw CodexOAuthError.callbackUnavailable }
+        let challenge = OAuthPKCE.challenge(verifier)
+        let callback: AntigravityOAuthCallback
+        let code: String
+        do {
+            callback = try AntigravityOAuthCallback(
+                state: state, ports: CodexOAuthConfiguration.callbackPorts,
+                path: CodexOAuthConfiguration.callbackPath, redirectHost: "localhost"
+            )
+            code = try await callback.wait { redirect in
+                guard let url = Self.authorizeURL(
+                    issuer: self.issuer, clientID: self.clientID,
+                    redirect: redirect, state: state, challenge: challenge
+                ) else { return }
+                onURL(url)
+            }
+        } catch let error as AntigravityOAuthError {
+            throw Self.callbackError(error)
         }
         guard let redirect = await callback.redirectURI() else { throw CodexOAuthError.callbackUnavailable }
         try Task.checkCancellation()
@@ -49,15 +55,17 @@ public struct CodexOAuthClient: Sendable {
 
     /// Exchanges a still-valid refresh token for fresh credentials.
     public func refresh(_ credentials: CodexOAuthCredentials) async throws -> CodexOAuthCredentials {
+        let issuedAt = Date()
         let tokens = try await tokenRequest([
             ("grant_type", "refresh_token"),
             ("client_id", clientID),
             ("refresh_token", credentials.refreshToken)
         ])
-        return try Self.credentials(from: tokens, previous: credentials)
+        return try Self.credentials(from: tokens, previous: credentials, issuedAt: issuedAt)
     }
 
     private func exchange(code: String, redirect: URL, verifier: String) async throws -> CodexOAuthCredentials {
+        let issuedAt = Date()
         let tokens = try await tokenRequest([
             ("grant_type", "authorization_code"),
             ("client_id", clientID),
@@ -65,7 +73,16 @@ public struct CodexOAuthClient: Sendable {
             ("redirect_uri", redirect.absoluteString),
             ("code_verifier", verifier)
         ])
-        return try Self.credentials(from: tokens, previous: nil)
+        return try Self.credentials(from: tokens, previous: nil, issuedAt: issuedAt)
+    }
+
+    static func callbackError(_ error: AntigravityOAuthError) -> CodexOAuthError {
+        switch error {
+        case .userCancelled: .userCancelled
+        case .timedOut: .timedOut
+        case .invalidResponse: .invalidResponse
+        default: .callbackUnavailable
+        }
     }
 
     static func authorizeURL(issuer: String, clientID: String, redirect: URL,
@@ -128,22 +145,28 @@ public struct CodexOAuthClient: Sendable {
         }
     }
 
-    static func credentials(from tokens: TokenResponse, previous: CodexOAuthCredentials?) throws -> CodexOAuthCredentials {
+    static func credentials(from tokens: TokenResponse, previous: CodexOAuthCredentials?,
+                            issuedAt: Date = Date()) throws -> CodexOAuthCredentials {
         let claims = tokens.id_token.flatMap(jwtClaims)
         let email = claims?.email ?? previous?.email ?? ""
         let accountID = claims?.accountID ?? previous?.accountID ?? ""
-        guard !email.isEmpty, !accountID.isEmpty else { throw CodexOAuthError.invalidResponse }
+        guard !email.isEmpty, !accountID.isEmpty,
+              previous == nil || previous?.accountID == accountID
+        else { throw CodexOAuthError.invalidResponse }
         guard let refreshToken = tokens.refresh_token ?? previous?.refreshToken,
-              !refreshToken.isEmpty else { throw CodexOAuthError.invalidResponse }
-        let expiresAt = Date().addingTimeInterval(tokens.expires_in ?? 3600)
-        return CodexOAuthCredentials(
+              !refreshToken.isEmpty, let lifetime = tokens.expires_in,
+              lifetime.isFinite, lifetime > 0, lifetime <= 31_536_000
+        else { throw CodexOAuthError.invalidResponse }
+        let credentials = CodexOAuthCredentials(
             accessToken: tokens.access_token,
             refreshToken: refreshToken,
-            expiresAt: expiresAt,
+            expiresAt: issuedAt.addingTimeInterval(lifetime),
             accountID: accountID,
             email: email,
             planType: claims?.planType ?? previous?.planType
         )
+        guard valid(credentials) else { throw CodexOAuthError.invalidResponse }
+        return credentials
     }
 
     struct JWTClaims {
@@ -169,23 +192,6 @@ public struct CodexOAuthClient: Sendable {
         )
     }
 
-    static func randomURLSafe(byteCount: Int) -> String {
-        var bytes = [UInt8](repeating: 0, count: byteCount)
-        _ = SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes)
-        return Data(bytes).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
-
-    static func codeChallenge(verifier: String) -> String {
-        let digest = SHA256.hash(data: Data(verifier.utf8))
-        return Data(digest).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
-
     private static func formEscape(_ value: String) -> String {
         value.addingPercentEncoding(
             withAllowedCharacters: .urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&+="))
@@ -194,54 +200,16 @@ public struct CodexOAuthClient: Sendable {
 
     static func valid(_ credentials: CodexOAuthCredentials) -> Bool {
         !credentials.accessToken.isEmpty && !credentials.refreshToken.isEmpty
+            && credentials.expiresAt.timeIntervalSince1970.isFinite
+            && [credentials.accessToken, credentials.refreshToken].allSatisfy {
+                $0.utf8.count <= 16_384 && $0.utf8.allSatisfy { (33...126).contains($0) }
+            }
             && !credentials.accountID.isEmpty && !credentials.email.isEmpty
     }
 }
 
-/// One ephemeral session per request; redirect targets never receive credentials.
-final class CodexOAuthHTTPS: NSObject, URLSessionTaskDelegate, Sendable {
+enum CodexOAuthHTTPS {
     static func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpCookieStorage = nil
-        configuration.httpShouldSetCookies = false
-        configuration.urlCredentialStorage = nil
-        configuration.urlCache = nil
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 30
-        let session = URLSession(configuration: configuration, delegate: CodexOAuthHTTPS(), delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let response = response as? HTTPURLResponse, response.expectedContentLength <= 65_536 else {
-            throw CodexOAuthError.invalidResponse
-        }
-        var data = Data()
-        for try await byte in bytes {
-            try Task.checkCancellation()
-            guard data.count < 65_536 else { throw CodexOAuthError.invalidResponse }
-            data.append(byte)
-        }
-        return (data, response)
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
-        completionHandler(nil)
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        handle(challenge, completionHandler)
-    }
-
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        handle(challenge, completionHandler)
-    }
-
-    private func handle(_ challenge: URLAuthenticationChallenge,
-                        _ completion: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        completion(challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust
-            ? .performDefaultHandling : .cancelAuthenticationChallenge, nil)
+        try await OAuthHTTPS.send(request, invalidResponse: CodexOAuthError.invalidResponse)
     }
 }

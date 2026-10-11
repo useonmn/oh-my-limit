@@ -35,6 +35,26 @@ if sys.argv[1:] == ['--version']:
     print('1.1.10' if mode == 'old' else '1.1.11')
     sys.exit(0)
 assert sys.argv[1:] == ['-p', '/usage', '--output-format', 'json', '--print-timeout', '90s']
+if mode == 'tree':
+    r, w = os.pipe()
+    child = os.fork()
+    if child == 0:
+        os.close(r)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        os.write(w, b'R')
+        os.close(w)
+        while True: signal.pause()
+    os.close(w)
+    assert os.read(r, 1) == b'R'
+    os.close(r)
+    with open(os.path.join(root, 'child'), 'w') as f:
+        f.write(str(child))
+    def terminate_tree(signum, frame):
+        os.waitpid(child, 0)
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, terminate_tree)
+    os.write(1, b'R')
+    while True: signal.pause()
 if mode in ['cancel', 'timeout']:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     os.write(1, b'R')

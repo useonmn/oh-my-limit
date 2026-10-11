@@ -3,16 +3,19 @@ import Testing
 @testable import OhMyLimitCore
 
 struct LaunchAtLoginTests {
-    @Test func propertyListOpensAppAtLogin() throws {
-        let appURL = URL(fileURLWithPath: "/Applications/Oh My Limit.app", isDirectory: true)
-
-        let data = try LaunchAtLogin.propertyList(appURL: appURL)
-
-        let propertyList = try #require(
-            PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
-        )
-        #expect(propertyList["Label"] as? String == LaunchAtLogin.label)
-        #expect(propertyList["ProgramArguments"] as? [String] == ["/usr/bin/open", appURL.path])
-        #expect(propertyList["RunAtLoad"] as? Bool == true)
+    @Test(arguments: [
+        ("/Applications/Oh My Limit.app", false, [String](), true),
+        ("/Volumes/External/OhMyLimit.app", false, [], false),
+        ("/Volumes/Installer/OhMyLimit.app", true, [], false),
+        ("/private/var/folders/AppTranslocation/random/OhMyLimit.app", false, [], false),
+        ("/project/.build/debug", false, [], false),
+        ("/Applications/OhMyLimit.app", false, ["--preview", "normal"], false),
+        ("/Applications/OhMyLimit.app", false, ["--capture", "/tmp/out.png"], false),
+        ("/Applications/OhMyLimit.app", false, ["--probe-antigravity"], false),
+    ])
+    func eligibility(path: String, readOnly: Bool, arguments: [String], expected: Bool) {
+        #expect(LaunchAtLogin.isEligible(
+            appURL: URL(fileURLWithPath: path), volumeIsReadOnly: readOnly, arguments: arguments
+        ) == expected)
     }
 }
