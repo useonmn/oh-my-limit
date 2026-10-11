@@ -21,8 +21,11 @@ enum Theme {
     static func settingsHeight(accountCount: Int) -> CGFloat {
         min(420, 330 + CGFloat(accountCount) * 35)
     }
-    static let panelInset: CGFloat = 14
-    static let panelRadius: CGFloat = 17
+    // Concentric geometry (WWDC25 "Get to know the new design system"):
+    // inner radius = outer radius - inset, and group content is padded by its
+    // own radius, so every text edge sits on the panel radius (10 + 12 = 22).
+    static let panelInset: CGFloat = 10
+    static let panelRadius: CGFloat = 22
     static let panelHeader: CGFloat = 34
     static let panelTitle = Font.system(size: 11, weight: .semibold)
     static let panelAccount = Font.system(size: 12, weight: .semibold)
@@ -37,8 +40,13 @@ enum Theme {
     static let panelSmall: CGFloat = 4
     static let panelCompact: CGFloat = 7
     static let panelGap: CGFloat = 10
-    static let panelPadding: CGFloat = 14
-    static let panelGroupRadius: CGFloat = 10
+    static let panelGroupRadius: CGFloat = panelRadius - panelInset
+    static let panelPadding: CGFloat = panelGroupRadius
+    static let panelTextInset: CGFloat = panelInset + panelPadding
+    /// Edge padding that puts an icon glyph, not its larger hit area, on the text line.
+    static func opticalInset(control: CGFloat, glyph: CGFloat) -> CGFloat {
+        panelTextInset - (control - glyph) / 2
+    }
     static let settingsTitle = Font.system(size: 12, weight: .semibold)
     static let settingsBody = Font.system(size: 12)
     static let panelSelected = Color.primary.opacity(0.10)

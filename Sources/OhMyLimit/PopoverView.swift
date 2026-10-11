@@ -15,7 +15,8 @@ struct AccountCard: View {
         VStack(alignment: .leading, spacing: Theme.panelGap) {
             HStack(alignment: .top) {
                 ProviderMark(provider: state.profile.provider)
-                    .frame(width: Theme.detailProviderSize, height: Theme.detailProviderSize).padding(Theme.panelSmall)
+                    .frame(width: Theme.detailProviderSize, height: Theme.detailProviderSize)
+                    .padding(.vertical, Theme.panelSmall).padding(.trailing, Theme.panelSmall)
                     .padding(.top, Theme.panelSmall)
                 VStack(alignment: .leading, spacing: Theme.panelSmall) {
                     Text(state.profile.name).font(Theme.panelAccount).lineLimit(1)
@@ -51,9 +52,12 @@ struct AccountCard: View {
                         .font(Theme.panelBody)
                         .frame(width: Theme.panelMenuSize, height: Theme.panelMenuSize)
                 }
-                .menuStyle(.borderlessButton)
+                .menuStyle(.button)
+                .buttonStyle(.borderless)
                 .menuIndicator(.hidden)
+                .tint(.secondary)
                 .fixedSize()
+                .padding(.trailing, -(Theme.panelMenuSize - Theme.detailProviderSize) / 2)
                 .help("계정 동작")
                 .accessibilityLabel("\(state.profile.name) 계정 메뉴")
             }
@@ -76,9 +80,7 @@ struct AccountCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if snapshot.ordinaryUsageAllowed == false {
-                    Label("서버에서 기본 사용량이 제한된 상태입니다.", systemImage: "exclamationmark.circle")
-                        .font(Theme.panelCaption).foregroundStyle(Theme.panelWarning)
-                        .fixedSize(horizontal: false, vertical: true)
+                    WarningLabel(text: "서버에서 기본 사용량이 제한된 상태입니다.", systemImage: "exclamationmark.circle.fill")
                 }
                 if let credits = snapshot.credits {
                     HStack {
@@ -109,10 +111,7 @@ struct AccountCard: View {
             }
 
             if let error = state.error {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .font(Theme.panelCaption)
-                    .foregroundStyle(Theme.panelWarning)
-                    .fixedSize(horizontal: false, vertical: true)
+                WarningLabel(text: error)
             }
             if state.needsKeychainAccess && !state.isLoggingIn {
                 Button("키체인 접근 허용", action: authorizeKeychain)
@@ -128,7 +127,7 @@ struct AccountCard: View {
                     if state.isRefreshing { ProgressView().controlSize(.mini) }
                     Text("마지막 확인 · \(ageDescription(snapshot.fetchedAt))")
                     if state.isStale(at: now) {
-                        Text("· 이전 값").foregroundStyle(Theme.panelWarning)
+                        Text("· 이전 값").foregroundStyle(Theme.panelPrimary)
                     }
                 }
                 .font(Theme.panelCaption)
@@ -238,10 +237,12 @@ struct PopoverView: View {
 
     private var header: some View {
         HStack(spacing: Theme.panelSmall) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Oh My Limit").font(Theme.panelTitle)
-                Text(preview ? "예시 데이터 · 사용률" : "사용률")
+            Text("Oh My Limit").font(Theme.panelTitle).foregroundStyle(Theme.panelPrimary)
+            if preview {
+                Text("예시 데이터")
                     .font(Theme.panelCaption)
+                    .padding(.horizontal, Theme.panelSmall + 1).padding(.vertical, 1)
+                    .overlay { Capsule().stroke(Theme.panelSeparator, lineWidth: 0.5) }
             }
             Spacer(minLength: Theme.panelSmall)
             if !accounts.isEmpty {
@@ -269,8 +270,9 @@ struct PopoverView: View {
                 Image(systemName: "gearshape")
                     .frame(width: Theme.panelControlSize, height: Theme.panelControlSize)
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
             .menuIndicator(.hidden)
+            .tint(.secondary)
             .fixedSize()
             .help("설정 및 종료")
             .accessibilityLabel("설정 및 종료")
@@ -278,7 +280,8 @@ struct PopoverView: View {
         .buttonStyle(.borderless)
         .font(Theme.panelBody)
         .foregroundStyle(Theme.panelSecondary)
-        .padding(.horizontal, Theme.panelInset)
+        .padding(.leading, Theme.panelTextInset)
+        .padding(.trailing, Theme.opticalInset(control: Theme.panelControlSize, glyph: Theme.detailProviderSize))
         .frame(height: Theme.panelHeader)
     }
 
@@ -356,14 +359,14 @@ struct PopoverView: View {
         VStack(alignment: .leading, spacing: Theme.panelGap) {
             if let notice {
                 HStack(alignment: .top, spacing: Theme.panelCompact) {
-                    Text(notice).font(Theme.panelCaption).fixedSize(horizontal: false, vertical: true)
+                    WarningLabel(text: notice)
                     Spacer(minLength: 0)
                     Button(action: actions.dismissNotice) {
                         Image(systemName: "xmark").frame(width: Theme.panelDismissSize, height: Theme.panelDismissSize)
                     }
-                    .buttonStyle(.borderless).accessibilityLabel("알림 닫기")
+                    .buttonStyle(.borderless).foregroundStyle(Theme.panelSecondary).accessibilityLabel("알림 닫기")
                 }
-                .foregroundStyle(Theme.panelWarning)
+                .padding(.horizontal, Theme.panelPadding)
             }
             if accounts.isEmpty {
                 emptyState
@@ -413,6 +416,7 @@ struct PopoverView: View {
                 .frame(maxWidth: .infinity)
         }
         .padding(.top, Theme.panelSmall)
+        .padding(.horizontal, Theme.panelPadding)
     }
 }
 
@@ -446,7 +450,8 @@ struct LivePopover: View {
                     .buttonStyle(.borderless)
                     .font(Theme.settingsBody)
                     .foregroundStyle(Theme.panelSecondary)
-                    .padding(.horizontal, Theme.padding)
+                    .padding(.leading, Theme.opticalInset(control: Theme.settingsControlSize, glyph: Theme.panelSmall * 2))
+                    .padding(.trailing, Theme.panelTextInset)
                     .frame(height: Theme.settingsHeaderHeight)
                     settingsView
                 }
@@ -521,7 +526,7 @@ private struct AccountRing: View {
             .frame(width: Theme.accountButtonWidth)
             .padding(.vertical, Theme.panelCompact)
             .menuSelection(selected)
-            .contentShape(RoundedRectangle(cornerRadius: Theme.panelGroupRadius))
+            .contentShape(RoundedRectangle(cornerRadius: Theme.panelGroupRadius, style: .continuous))
         }
         .buttonStyle(AccountRingButtonStyle())
         .help("\(state.profile.name) · \(state.profile.provider.displayName)\n\(caption) \(value)")
@@ -538,7 +543,7 @@ private struct AccountRingButtonStyle: ButtonStyle {
         configuration.label
             .opacity(configuration.isPressed ? 0.65 : 1)
             .overlay {
-                RoundedRectangle(cornerRadius: Theme.panelGroupRadius)
+                RoundedRectangle(cornerRadius: Theme.panelGroupRadius - 1, style: .continuous)
                     .stroke(isFocused ? Theme.mint : .clear, lineWidth: 2)
                     .padding(1)
             }

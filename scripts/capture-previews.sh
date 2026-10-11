@@ -18,7 +18,7 @@ for ENTRY in normal:2 empty:1 error:2 loading:2 long:2 models:1 settings:1 setti
         done
     done
 done
-for SCENARIO in many-windows antigravity-unknown antigravity-stale keychain-cached; do
+for SCENARIO in many-windows; do
     for APPEARANCE in light dark; do
         "$BIN/OhMyLimit" --preview "$SCENARIO" --appearance "$APPEARANCE" \
             --capture-scroll-bottom --capture "$OUTPUT/$SCENARIO-bottom-$APPEARANCE.png"

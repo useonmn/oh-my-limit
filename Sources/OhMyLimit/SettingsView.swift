@@ -101,7 +101,7 @@ struct SettingsView: View {
                 connectionActions
             }
         }
-        .padding(Theme.padding)
+        .padding(Theme.panelInset)
     }
 
     private func move(_ id: UUID, offset: Int) {
@@ -153,9 +153,9 @@ struct SettingsView: View {
 
     private func panelGroup<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: Theme.compact, content: content)
-            .padding(Theme.gap)
+            .padding(Theme.panelPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .menuGroup()
+            .menuGroup(radius: Theme.panelGroupRadius)
     }
 }
 

@@ -37,7 +37,7 @@ change primary-quota, stale or unknown-value rules.
 ## 2. Color
 
 The panel follows the system appearance over native Liquid Glass on macOS
-26 and later (`glassEffect(.regular)` with the 17 pt rounded panel shape).
+26 and later (`glassEffect(.regular)` with the 22 pt rounded panel shape).
 The September 21 references show wallpaper-responsive native menu surfaces;
 the legacy NSVisualEffectView `.menu` material is not an identical recipe.
 Keep that behind-window material only for supported macOS 14/15 systems.
@@ -50,6 +50,9 @@ Accent tokens adapt per appearance: mint `#0B9E6B`/`#30E8A0`, warning
 `#9A4E00`/`#FFB45E`, critical `#D92D20`/`#FF654F` (light/dark). Use mint below
 80%, orange at 80%, red at 95%. Color never replaces the percentage or state
 label.
+Warning color marks only the symbol of a warning (error, notice, overdue
+reset); the words use the primary label color so they stay legible over
+glass vibrancy.
 Unknown and expired observations have an empty ring with a dash, not 0%.
 Stale values use a muted arc, a tilde and an explicit previous-value label.
 Settings retain their adaptive system palette. No new theme toggle.
@@ -67,24 +70,30 @@ label; errors wrap instead of clipping.
 ## 4. Spacing & Layout
 
 Base unit: 4 pt. Named steps: 4, 8, 12, 16, 20, 24.
-The popover uses its own 85% scale: steps 4, 7, 10, 14 pt and a 10 pt group radius.
-Popover width: 272 pt; horizontal inset 14 pt;
-outer radius 17 pt. A quiet 34 pt header provides refresh, add and settings.
+The popover uses its own 85% scale: steps 4, 7, 10, 12 pt.
+Geometry is concentric (WWDC25 design system): inner radius = outer radius - inset.
+Panel radius 22 pt; groups and the selected ring tile sit 10 pt from the panel
+edge with a 12 pt radius; group content is padded by that same 12 pt, so every
+text edge lands on one 22 pt line from the panel edge. The header title starts
+on that line and icon glyphs (not their hit areas) end on it. All rounded
+shapes use continuous corners.
+Popover width: 272 pt. A quiet one-line 34 pt header provides refresh, add and settings.
 Below it, a horizontal row of 75 pt account buttons uses 48 pt rings with
 5 pt round-capped strokes, 19 pt provider marks, large percentages, account names and quota-window labels.
 Center up to three accounts in a 142 pt selector; additional accounts scroll
 horizontally in 153 pt to reserve space for native indicators. Selection has a
 subtle selected fill and visible focus outline.
-Below the selector, a quiet 10 pt-radius group with 14 pt insets shows only
+Below the selector, a quiet 12 pt-radius group with 12 pt padding shows only
 the selected account: a faint fill and a hairline edge, no shadow or layered
-material. Its 244 pt outer width, rounded mask, and outer margins stay fixed
+material. Its 252 pt outer width, rounded mask, and outer margins stay fixed
 whether its content fits or overflows. Only the padded contents scroll; the
-group background and 14 pt bottom inset never scroll away.
+group background and 10 pt bottom inset never scroll away.
 Use a native overlay scrollbar inside the group so an appearing scrollbar
 does not consume content width or reflow text. Keep the indicator usable and
 inset from the rounded corners; do not change global macOS scroll preferences.
 The selector and header remain visible. Detail rows have 10 pt spacing and
-4 pt progress bars.
+4 pt progress bars. Each quota row is: label and used percent on one line,
+the bar, then reset countdown and remaining percent as a caption line.
 Spatial model: [scroll-body-shell](https://github.com/changeroa/StyleGallery/blob/main/patterns/viewport-shell/scroll-body-shell.md),
 adapted to a bounded native card rather than a web page.
 Empty onboarding remains compact, with an existing-account button and service
@@ -93,7 +102,8 @@ Reset countdowns stay concise; complete local dates appear in tooltips.
 Measure the actual SwiftUI content, including errors and notices, and cap the
 height at 527 pt. Account selection and data changes must update native popover
 sizing after published state commits. Keep `height(for:)` compatible by adding
-an optional selected ID. Settings open in the same panel at 320 pt width with a compact
+an optional selected ID. Settings open in the same panel at 320 pt width, using the
+same 10 pt inset, 12 pt group radius and 12 pt group padding, with a compact
 account-count-dependent height capped at 420 pt; excess content scrolls.
 Buttons remain real keyboard-reachable SwiftUI controls; the primary action
 uses `.borderedProminent` with the system focus ring.
@@ -139,12 +149,12 @@ windows, stale data, login waiting, and errors in both appearances.
   refresh, reconnect, cancel and disconnect actions. Direct accounts are
   independent; only the local Antigravity account follows external login. CLI
   reports without an email never inherit the previous local identity.
-- `Header`: small app title, visibly labeled preview data when applicable, connected
-  "사용률" context so percentages are not mistaken for remaining allowance,
-  refresh/add controls, and a settings menu containing settings and quit. Refresh
-  retains its disabled/loading state and Command-R; quit retains Command-Q.
-  The title and usage/preview context share a two-line label in the quiet header,
-  with refresh, a separate add button and settings controls alongside.
+- `Header`: one quiet line with the small app title, a capsule badge for preview
+  data when applicable, refresh, a separate add button and a settings menu
+  containing settings and quit. Refresh retains its disabled/loading state and
+  Command-R; quit retains Command-Q. All three icons share the secondary label
+  color; the accent color never tints header chrome. Used-percent meaning comes
+  from each quota row's "남음" caption, not a header label.
 - Account login and login cancellation use the adaptive
   macOS link color so they remain distinct from disabled metadata in both appearances.
 
@@ -175,7 +185,7 @@ Borderless NSPanel backed by one native Liquid Glass surface on macOS 26+,
 with the legacy behind-window menu material on macOS 14/15.
 The OS owns refraction, blur and the outer edge; do not paint an imitation
 gradient or stack a second material beneath it. Clip the complete surface to
-the same 17 pt continuous rounded shape, including in the real borderless
+the same 22 pt continuous rounded shape, including in the real borderless
 panel, so the hosting view cannot leave square corner edges. Chrome stays
 flat: icon triggers are plain borderless symbols, grouped content sits in a
 faint fill with a hairline edge, and ring selection is a flat selected-content

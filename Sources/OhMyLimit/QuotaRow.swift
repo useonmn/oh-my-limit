@@ -8,22 +8,17 @@ struct QuotaRow: View {
     private var awaitingReset: Bool { window.resetsAt.map { $0 <= now } ?? false }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.panelSmall) {
-            HStack(alignment: .top, spacing: Theme.panelCompact) {
+        VStack(alignment: .leading, spacing: Theme.panelSmall + 1) {
+            HStack(alignment: .firstTextBaseline, spacing: Theme.panelCompact) {
                 Text([window.label, durationLabel == window.label ? nil : durationLabel]
                     .compactMap { $0 }.joined(separator: " · "))
                     .font(Theme.panelBody)
                     .lineLimit(1).help(window.label)
                 Spacer(minLength: Theme.panelCompact)
-                Text(resetDescription)
-                    .font(Theme.panelCaption).monospacedDigit()
-                    .foregroundStyle(awaitingReset ? Theme.panelWarning : Theme.panelSecondary)
-                    .multilineTextAlignment(.trailing)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .help(window.resetsAt?.formatted(date: .complete, time: .complete)
-                          ?? window.resetDescription ?? "초기화 시각 미제공")
+                Text(window.usageKnown ? "\(window.usedPercent, specifier: "%.0f")%" : "알 수 없음")
+                    .font(window.usageKnown ? Theme.panelValue : Theme.panelCaption)
+                    .foregroundStyle(window.usageKnown && !awaitingReset ? Theme.panelPrimary : Theme.panelSecondary)
             }
-            .padding(.bottom, Theme.panelSmall)
             if window.usageKnown {
                 ProgressView(value: min(max(window.usedPercent, 0), 100), total: 100)
                     .progressViewStyle(QuotaProgressStyle(
@@ -35,20 +30,23 @@ struct QuotaRow: View {
                 Capsule().fill(Theme.panelTrack)
                     .frame(height: Theme.barHeight).accessibilityHidden(true)
             }
-            if window.usageKnown {
-                HStack(spacing: Theme.panelSmall) {
-                    Text("\(window.usedPercent, specifier: "%.0f")% 사용").font(Theme.panelValue)
-                        .foregroundStyle(awaitingReset ? Theme.panelSecondary : Theme.panelPrimary)
-                    if !awaitingReset {
-                        Text("· \(max(0, 100 - window.usedPercent), specifier: "%.0f")% 남음")
-                            .font(Theme.panelCaption).foregroundStyle(Theme.panelSecondary)
+            HStack(alignment: .firstTextBaseline, spacing: Theme.panelCompact) {
+                Group {
+                    if awaitingReset {
+                        WarningLabel(text: resetDescription, systemImage: "exclamationmark.circle.fill")
+                    } else {
+                        Text(resetDescription).monospacedDigit()
                     }
                 }
-                .padding(.top, Theme.panelSmall)
-            } else {
-                Text("알 수 없음").font(Theme.panelCaption).foregroundStyle(Theme.panelSecondary)
-                    .padding(.top, Theme.panelSmall)
+                .help(window.resetsAt?.formatted(date: .complete, time: .complete)
+                      ?? window.resetDescription ?? "초기화 시각 미제공")
+                Spacer(minLength: Theme.panelCompact)
+                if window.usageKnown && !awaitingReset {
+                    Text("\(max(0, 100 - window.usedPercent), specifier: "%.0f")% 남음").monospacedDigit()
+                }
             }
+            .font(Theme.panelCaption)
+            .foregroundStyle(Theme.panelSecondary)
         }
         .accessibilityElement(children: .combine)
     }
@@ -74,6 +72,20 @@ struct QuotaRow: View {
             duration = "\(remaining)분"
         }
         return "\(duration) 후 초기화"
+    }
+}
+
+/// Warning colour on the symbol only; the words keep label contrast over vibrancy.
+struct WarningLabel: View {
+    let text: String
+    var systemImage = "exclamationmark.triangle.fill"
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: Theme.panelSmall) {
+            Image(systemName: systemImage).foregroundStyle(Theme.panelWarning).accessibilityHidden(true)
+            Text(text).foregroundStyle(Theme.panelPrimary).fixedSize(horizontal: false, vertical: true)
+        }
+        .font(Theme.panelCaption)
     }
 }
 
