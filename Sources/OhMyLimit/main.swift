@@ -164,14 +164,16 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         let now = Date()
         guard let button = statusItem?.button else { return }
         if states.isEmpty {
-            button.title = "Limit"
+            button.title = ""
             button.image = NSImage(systemSymbolName: "gauge.with.dots.needle.33percent", accessibilityDescription: nil)
-            button.imagePosition = .imageLeading
+            button.imagePosition = .imageOnly
         } else {
             button.title = ""
-            button.image = MenuBarSummary.image(for: MenuBarPresentation.entries(
-                for: states, at: now, limit: Theme.menuBarAccountLimit
-            ).map { (provider: $0.provider, text: $0.text) })
+            button.image = MenuBarSummary.image(for: MenuBarPresentation.fit(
+                states, at: now, limit: Theme.menuBarAccountLimit,
+                maxWidth: Double(Theme.menuBarMaximumWidth),
+                width: { Double(MenuBarSummary.width(for: $0)) }
+            ))
             button.imagePosition = .imageOnly
         }
         button.toolTip = MenuBarPresentation.tooltip(for: states, at: now)
