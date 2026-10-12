@@ -57,7 +57,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             monitor: model, selection: selection, flow: flow, actions: actions,
             settingsView: AnyView(settingsView(for: model))
         ))
-        subscription = model.$accounts.combineLatest(model.$notice, selection.$selectedID)
+        subscription = model.$accounts.combineLatest(model.$notice)
             .combineLatest(flow.$showingSettings)
             .sink { [weak self] _ in
                 // @Published emits before storage commits. Native sizing can
@@ -144,11 +144,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private var actions: PopoverActions {
         PopoverActions(
             selectAccount: { [weak self] id in
-                guard let self else { return }
-                self.selection.select(id)
-                // Resize in the same pass that draws the new selection; the
-                // deferred sink would show it one frame at the old height.
-                self.updatePanelSize()
+                self?.select(id)
             },
             refreshAll: { [weak self] in self?.monitor?.refreshAll() },
             settings: { [weak self] in self?.showSettings() },
@@ -280,6 +276,14 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         ))
     }
 
+    // Resize in the same pass that draws a changed selection; the deferred
+    // account sink would otherwise show it one frame at the old height.
+    private func select(_ id: UUID) {
+        guard selection.selectedID != id else { return }
+        selection.select(id)
+        if !flow.showingSettings { updatePanelSize() }
+    }
+
     private func closePanel() {
         guard panel.isVisible else { return }
         panel.orderOut(nil)
@@ -297,7 +301,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     @objc private func woke() { monitor?.refreshAll(manual: false) }
 
     private func login(_ id: UUID) {
-        selection.select(id)
+        select(id)
         if let profile = monitor?.accounts.first(where: { $0.id == id })?.profile,
            profile.provider == .antigravity && profile.authentication == .local {
             openAntigravity()
@@ -310,7 +314,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
     private func connectAntigravity() {
         guard let id = monitor?.connectAntigravity() else { return }
-        selection.select(id)
+        select(id)
         monitor?.refresh(id)
         flow.showingSettings = false
     }
