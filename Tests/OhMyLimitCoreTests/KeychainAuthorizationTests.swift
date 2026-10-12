@@ -56,7 +56,7 @@ import Testing
         try await setup.expectOriginalCredentials()
     }
 
-    @Test(arguments: [AccountProvider.codex, .antigravity],
+    @Test(arguments: [AccountProvider.codex, .antigravity, .claude],
           [errSecInteractionNotAllowed, errSecInteractionRequired, errSecAuthFailed])
     func typedStorageFailuresRequireAuthorization(_ provider: AccountProvider, _ status: OSStatus) async throws {
         let setup = try await AuthorizationSetup(provider: provider)
@@ -156,10 +156,16 @@ private actor AuthorizationFetchGate {
         expiresAt: Date(timeIntervalSince1970: 2_000_000_000),
         accountID: "codex-id", email: "codex@example.invalid"
     )
+    let claude = ClaudeOAuthCredentials(
+        accessToken: "claude-access", refreshToken: "claude-refresh",
+        expiresAt: Date(timeIntervalSince1970: 2_000_000_000),
+        accountID: "claude-id", email: "claude@example.invalid"
+    )
     let profiles: [AccountProfile]
     let monitor: UsageMonitor
     let googleKeychain: AntigravityOAuthKeychain
     let codexKeychain: CodexOAuthKeychain
+    let claudeKeychain: ClaudeOAuthKeychain
 
     init(
         provider: AccountProvider,
@@ -167,15 +173,24 @@ private actor AuthorizationFetchGate {
     ) async throws {
         googleKeychain = AntigravityOAuthKeychain(service: "test.authorization.google", security: security)
         codexKeychain = CodexOAuthKeychain(service: "test.authorization.codex", security: security)
-        let identity = provider == .codex ? codex.identity : google.identity
+        claudeKeychain = ClaudeOAuthKeychain(service: "test.authorization.claude", security: security)
+        let identity: CodexIdentity
+        switch provider {
+        case .codex: identity = codex.identity
+        case .antigravity: identity = google.identity
+        case .claude: identity = claude.identity
+        }
         let homePath = root.path
         profiles = ["First", "Second"].map {
             AccountProfile(name: $0, homePath: homePath, isManaged: false,
                            provider: provider, authentication: .oauth, oauthIdentity: identity)
         }
         for profile in profiles {
-            if provider == .codex { try codexKeychain.save(codex, profileID: profile.id) }
-            else { try await googleKeychain.save(google, profileID: profile.id) }
+            switch provider {
+            case .codex: try codexKeychain.save(codex, profileID: profile.id)
+            case .antigravity: try await googleKeychain.save(google, profileID: profile.id)
+            case .claude: try claudeKeychain.save(claude, profileID: profile.id)
+            }
         }
         let store = AccountStore(directory: root)
         try store.save(profiles)
@@ -208,6 +223,20 @@ private actor AuthorizationFetchGate {
                                               fetchedAt: .distantPast, source: .codexOAuth)
                 },
                 clock: { Date(timeIntervalSince1970: 1_900_000_000) }
+            ),
+            directClaude: ClaudeDirectClient(
+                keychain: claudeKeychain,
+                authenticate: { _ in
+                    Issue.record("Keychain authorization must not start Claude OAuth")
+                    throw ClaudeOAuthError.signInRequired
+                },
+                renew: { $0 },
+                fetch: {
+                    if let fetch { return try await fetch($0.identity) }
+                    return CodexUsageSnapshot(identity: $0.identity, windows: [],
+                                              fetchedAt: .distantPast, source: .claudeOAuth)
+                },
+                clock: { Date(timeIntervalSince1970: 1_900_000_000) }
             )
         )
     }
@@ -216,8 +245,10 @@ private actor AuthorizationFetchGate {
         for profile in profiles {
             if profile.provider == .codex {
                 #expect(try codexKeychain.load(profileID: profile.id) == codex)
-            } else {
+            } else if profile.provider == .antigravity {
                 #expect(try await googleKeychain.load(profileID: profile.id) == google)
+            } else {
+                #expect(try claudeKeychain.load(profileID: profile.id) == claude)
             }
         }
     }

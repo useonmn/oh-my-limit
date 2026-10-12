@@ -388,9 +388,7 @@ public final class UsageMonitor: ObservableObject {
                 guard !Task.isCancelled, let self, self.generations[id] == generation else { return }
                 self.update(id) {
                     $0.error = error.localizedDescription
-                    $0.needsKeychainAccess = (error as? CodexOAuthError)?.needsKeychainAccess == true
-                        || (error as? AntigravityOAuthError)?.needsKeychainAccess == true
-                        || (error as? ClaudeOAuthError)?.needsKeychainAccess == true
+                    $0.needsKeychainAccess = (error as? any OAuthFailure)?.needsKeychainAccess == true
                 }
                 let count = min((self.failures[id] ?? 0) + 1, 5)
                 self.failures[id] = count
@@ -483,9 +481,7 @@ public final class UsageMonitor: ObservableObject {
                 self.restoreLoginIdentity(id)
                 self.update(id) {
                     $0.error = error.localizedDescription
-                    $0.needsKeychainAccess = (error as? CodexOAuthError)?.needsKeychainAccess == true
-                        || (error as? AntigravityOAuthError)?.needsKeychainAccess == true
-                        || (error as? ClaudeOAuthError)?.needsKeychainAccess == true
+                    $0.needsKeychainAccess = (error as? any OAuthFailure)?.needsKeychainAccess == true
                 }
                 if authenticated {
                     let count = min((self.failures[id] ?? 0) + 1, 5)

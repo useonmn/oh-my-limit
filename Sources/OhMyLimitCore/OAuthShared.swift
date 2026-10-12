@@ -7,6 +7,7 @@ protocol OAuthFailure: Error {
     static var invalidResponse: Self { get }
     static var signInRequired: Self { get }
     static func storageFailure(_ status: Int32) -> Self
+    var needsKeychainAccess: Bool { get }
 }
 
 extension CodexOAuthError: OAuthFailure {}
