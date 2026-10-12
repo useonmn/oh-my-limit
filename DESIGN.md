@@ -28,7 +28,8 @@ or promotional copy. Native SwiftUI/AppKit, not a web surface.
 The menu bar uses a 14 pt monochrome provider logo followed by a 13 pt
 monospaced-digit percentage for at most the first three accounts, in account order.
 The image width is capped at 240 pt. Additional accounts appear as a compact `+N` count; countdowns and all accounts
-remain in the tooltip and accessibility label rather than widening the item. Replace numeric
+remain in the tooltip and accessibility label rather than widening the item.
+If the first three do not fit in 240 pt, fold the last visible one into +N rather than clipping. With no accounts, show only the gauge icon. Replace numeric
 ordinals and the generic leading gauge when accounts exist. Render as a native
 template image so light, dark and selected menu-bar appearances remain legible.
 Account names remain available in the tooltip and accessibility label; do not
