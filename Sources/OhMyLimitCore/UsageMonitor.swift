@@ -24,11 +24,11 @@ public struct AccountState: Identifiable, Sendable {
 
     public var menuWindow: CodexQuotaWindow? {
         let known = snapshot?.windows.filter(\.usageKnown) ?? []
-        let weekly = known.filter { $0.windowDurationMins == 10_080 }
+        let weekly = known.filter(\.isWeekly)
         switch profile.provider {
         case .codex:
             let main = known.filter { $0.id.hasPrefix("codex.") }
-            return main.first(where: { $0.windowDurationMins == 10_080 }) ?? main.first
+            return main.first(where: \.isWeekly) ?? main.first
         case .antigravity:
             return (weekly.isEmpty ? known : weekly).max { $0.usedPercent < $1.usedPercent }
         case .claude:

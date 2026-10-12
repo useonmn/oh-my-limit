@@ -56,6 +56,14 @@ public struct CodexQuotaWindow: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+extension CodexQuotaWindow {
+    public var isWeekly: Bool { windowDurationMins == 10_080 }
+
+    public func hasExpired(at now: Date) -> Bool {
+        resetsAt.map { $0 <= now } ?? false
+    }
+}
+
 public enum UsageSource: String, Codable, Sendable {
     case antigravityApp
     case antigravityCLI
