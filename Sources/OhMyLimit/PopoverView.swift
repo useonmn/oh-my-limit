@@ -476,6 +476,7 @@ private struct AccountRing: View {
     let name: String
     let selected: Bool
     let select: () -> Void
+    @FocusState private var focused: Bool
 
     private var window: CodexQuotaWindow? {
         guard let window = state.menuWindow,
@@ -530,7 +531,10 @@ private struct AccountRing: View {
             .menuSelection(selected)
             .contentShape(RoundedRectangle(cornerRadius: Theme.panelGroupRadius, style: .continuous))
         }
-        .buttonStyle(AccountRingButtonStyle())
+        .buttonStyle(AccountRingButtonStyle(focused: focused))
+        .focused($focused)
+        // The mint stroke below is the focus indicator; the system ring would double it.
+        .focusEffectDisabled()
         .help("\(state.profile.name) · \(state.profile.provider.displayName)\n\(caption) \(value)")
         .accessibilityLabel("\(name), \(state.profile.provider.displayName), \(caption), \(value)")
         .accessibilityValue(selected ? "선택됨" : "선택 안 됨")
@@ -539,14 +543,16 @@ private struct AccountRing: View {
 }
 
 private struct AccountRingButtonStyle: ButtonStyle {
-    @Environment(\.isFocused) private var isFocused
+    // `@Environment(\.isFocused)` inside a ButtonStyle never reflects the
+    // button's own keyboard focus, so the owning view passes it in.
+    let focused: Bool
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .opacity(configuration.isPressed ? 0.65 : 1)
             .overlay {
                 RoundedRectangle(cornerRadius: Theme.panelGroupRadius - 1, style: .continuous)
-                    .stroke(isFocused ? Theme.mint : .clear, lineWidth: 2)
+                    .stroke(focused ? Theme.mint : .clear, lineWidth: 2)
                     .padding(1)
             }
     }
