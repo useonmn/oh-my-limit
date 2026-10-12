@@ -5,7 +5,7 @@ struct QuotaRow: View {
     let window: CodexQuotaWindow
     let now: Date
 
-    private var awaitingReset: Bool { window.resetsAt.map { $0 <= now } ?? false }
+    private var awaitingReset: Bool { window.hasExpired(at: now) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.panelSmall + 1) {
@@ -53,7 +53,7 @@ struct QuotaRow: View {
 
     private var durationLabel: String? {
         guard let minutes = window.windowDurationMins else { return nil }
-        if minutes == 10_080 { return "주간" }
+        if window.isWeekly { return "주간" }
         if minutes % 1_440 == 0 { return "\(minutes / 1_440)일" }
         if minutes % 60 == 0 { return "\(minutes / 60)시간" }
         return "\(minutes)분"

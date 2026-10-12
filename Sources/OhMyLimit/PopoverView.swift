@@ -479,7 +479,7 @@ private struct AccountRing: View {
 
     private var window: CodexQuotaWindow? {
         guard let window = state.menuWindow,
-              !(window.resetsAt.map { $0 <= now } ?? false) else { return nil }
+              !window.hasExpired(at: now) else { return nil }
         return window
     }
 
@@ -492,10 +492,12 @@ private struct AccountRing: View {
         if state.isRefreshing && state.snapshot == nil { return "조회 중" }
         guard let window else { return state.snapshot == nil ? "미확인" : "확인 필요" }
         let period: String
-        switch window.windowDurationMins {
-        case 10_080: period = "주간"
-        case 300: period = "5시간"
-        default: period = "사용률"
+        if window.isWeekly {
+            period = "주간"
+        } else if window.windowDurationMins == 300 {
+            period = "5시간"
+        } else {
+            period = "사용률"
         }
         return period + (state.isStale(at: now) ? " · 이전 값" : "")
     }
