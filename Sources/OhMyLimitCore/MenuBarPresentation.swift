@@ -13,7 +13,7 @@ public struct MenuBarEntry: Equatable, Sendable {
 }
 
 public enum MenuBarPresentation {
-    public static func entries(for states: [AccountState], at now: Date, limit: Int) -> [MenuBarEntry] {
+    static func entries(for states: [AccountState], at now: Date, limit: Int) -> [MenuBarEntry] {
         let visible = states.prefix(limit)
         return visible.enumerated().map { offset, state in
             let overflow = offset == visible.count - 1 && states.count > visible.count
@@ -32,7 +32,7 @@ public enum MenuBarPresentation {
         return entries(for: states, at: now, limit: 1)
     }
 
-    public static func summaryLines(for states: [AccountState], at now: Date) -> String {
+    static func summaryLines(for states: [AccountState], at now: Date) -> String {
         states.map { state in
             var text = AccountUsageDisplay.value(for: state, at: now)
             if text != "—", let window = state.menuWindow, window.isWeekly, let resetsAt = window.resetsAt {
