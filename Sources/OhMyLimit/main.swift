@@ -162,14 +162,6 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatus(_ states: [AccountState]) {
         let now = Date()
-        let values = states.map { state in
-            var text = AccountUsageDisplay.value(for: state, at: now)
-            if text != "—", let window = state.menuWindow,
-               window.windowDurationMins == 10_080, let resetsAt = window.resetsAt {
-                text += "·" + Self.resetCountdown(until: resetsAt, from: now)
-            }
-            return text
-        }
         guard let button = statusItem?.button else { return }
         if states.isEmpty {
             button.title = "Limit"
@@ -177,30 +169,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             button.imagePosition = .imageLeading
         } else {
             button.title = ""
-            let visibleStates = Array(states.prefix(Theme.menuBarAccountLimit))
-            button.image = MenuBarSummary.image(for: visibleStates.enumerated().map {
-                (provider: $0.element.profile.provider,
-                 text: AccountUsageDisplay.value(for: $0.element, at: now)
-                    + ($0.offset == visibleStates.count - 1 && states.count > visibleStates.count
-                       ? " +\(states.count - visibleStates.count)" : ""))
-            })
+            button.image = MenuBarSummary.image(for: MenuBarPresentation.entries(
+                for: states, at: now, limit: Theme.menuBarAccountLimit
+            ).map { (provider: $0.provider, text: $0.text) })
             button.imagePosition = .imageOnly
         }
-        let names = zip(states, values).map {
-            "\($0.0.profile.name) · \($0.0.profile.provider.displayName): \($0.1)"
-        }.joined(separator: "\n")
-        button.toolTip = "사용률 · 주간 우선 · ~ 표시는 마지막 확인값 · % 뒤는 주간 초기화까지\n\(names)"
-        button.setAccessibilityLabel(names.isEmpty ? "Oh My Limit" : "Oh My Limit\n\(names)")
-    }
-
-    /// Compact countdown for the menu bar: "3d15h", "15h", or "42m".
-    private static func resetCountdown(until date: Date, from now: Date) -> String {
-        let minutes = max(1, Int(date.timeIntervalSince(now) / 60))
-        let days = minutes / 1_440
-        let hours = (minutes % 1_440) / 60
-        if days > 0 { return hours > 0 ? "\(days)d\(hours)h" : "\(days)d" }
-        if hours > 0 { return "\(hours)h" }
-        return "\(minutes)m"
+        button.toolTip = MenuBarPresentation.tooltip(for: states, at: now)
+        button.setAccessibilityLabel(MenuBarPresentation.accessibilityLabel(for: states, at: now))
     }
 
     @objc private func togglePopover() {
