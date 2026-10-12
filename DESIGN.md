@@ -26,8 +26,8 @@ service, account names distinguish separate subscriptions. No decorative motion
 or promotional copy. Native SwiftUI/AppKit, not a web surface.
 
 The menu bar uses a 14 pt monochrome provider logo followed by a 13 pt
-monospaced-digit percentage for at most the first two accounts, in account order.
-The image width is capped at 180 pt. Additional accounts appear as a compact `+N` count; countdowns and all accounts
+monospaced-digit percentage for at most the first three accounts, in account order.
+The image width is capped at 240 pt. Additional accounts appear as a compact `+N` count; countdowns and all accounts
 remain in the tooltip and accessibility label rather than widening the item. Replace numeric
 ordinals and the generic leading gauge when accounts exist. Render as a native
 template image so light, dark and selected menu-bar appearances remain legible.

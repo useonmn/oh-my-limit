@@ -143,7 +143,13 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
 
     private var actions: PopoverActions {
         PopoverActions(
-            selectAccount: { [weak self] id in self?.selection.select(id) },
+            selectAccount: { [weak self] id in
+                guard let self else { return }
+                self.selection.select(id)
+                // Resize in the same pass that draws the new selection; the
+                // deferred sink would show it one frame at the old height.
+                self.updatePanelSize()
+            },
             refreshAll: { [weak self] in self?.monitor?.refreshAll() },
             settings: { [weak self] in self?.showSettings() },
             addAccount: { [weak self] in self?.showSettings() },

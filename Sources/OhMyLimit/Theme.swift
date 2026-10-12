@@ -5,8 +5,8 @@ enum Theme {
     /// Usage popover width. Settings open in the same panel at `settingsWidth`.
     static let width: CGFloat = 272
     static let settingsWidth: CGFloat = 320
-    static let menuBarAccountLimit = 2
-    static let menuBarMaximumWidth: CGFloat = 180
+    static let menuBarAccountLimit = 3
+    static let menuBarMaximumWidth: CGFloat = 240
     static let panelMinimumHeight: CGFloat = 136
     static let panelMaximumHeight: CGFloat = 527
     static let selectorHeight: CGFloat = 142
