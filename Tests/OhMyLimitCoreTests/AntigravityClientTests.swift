@@ -77,6 +77,29 @@ import Testing
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func cancellationDeliversGracefulTerminationBeforeKill() async throws {
+        let fixture = try AntigravityFixture("graceful")
+        defer { try! fixture.remove() }
+        let ready = AsyncStream<Void>.makeStream()
+        let task = Task {
+            defer { ready.continuation.finish() }
+            return try await AntigravityCommand.run(executable: fixture.executable, arguments: Self.printArguments, timeout: 5) { _ in
+                ready.continuation.yield(())
+                ready.continuation.finish()
+            }
+        }
+        var received = false
+        for await _ in ready.stream { received = true }
+        #expect(received)
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        // The child writes this only from its SIGTERM handler; a blocked SIGTERM leaves only SIGKILL.
+        let marker = try? String(contentsOf: fixture.directory.appendingPathComponent("terminated"), encoding: .utf8)
+        #expect(marker == "SIGTERM")
+        #expect(try fixture.reapedAndCleaned())
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func cancellationSignalsDescendantsBeforeReapingTheirLeader() async throws {
         let fixture = try AntigravityFixture("tree")
         defer { try! fixture.remove() }

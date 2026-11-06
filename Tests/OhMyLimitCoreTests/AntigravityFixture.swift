@@ -59,6 +59,14 @@ if mode in ['cancel', 'timeout']:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     os.write(1, b'R')
     while True: signal.pause()
+if mode == 'graceful':
+    def terminated(signum, frame):
+        with open(os.path.join(root, 'terminated'), 'w') as f:
+            f.write('SIGTERM')
+        os._exit(0)
+    signal.signal(signal.SIGTERM, terminated)
+    os.write(1, b'R')
+    while True: signal.pause()
 if mode in ['stdout', 'stderr']:
     os.write(1 if mode == 'stdout' else 2, b'x' * (2 * 1024 * 1024))
     sys.exit(0)

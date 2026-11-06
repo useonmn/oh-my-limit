@@ -38,9 +38,9 @@ public struct CodexRemoteClient: Sendable {
             try Task.checkCancellation()
             guard data.count <= 65_536 else { throw CodexOAuthError.invalidResponse }
             guard (200...299).contains(response.statusCode) else {
-                if response.statusCode == 401 || response.statusCode == 403 {
-                    throw CodexOAuthError.signInRequired
-                }
+                // Only 401 means the token is bad; 403 is a policy/edge block that
+                // token renewal cannot fix, so it must not rotate the refresh token.
+                if response.statusCode == 401 { throw CodexOAuthError.signInRequired }
                 throw CodexOAuthError.authorizationFailed(response.statusCode)
             }
             return data
@@ -58,7 +58,6 @@ public struct CodexRemoteClient: Sendable {
 enum CodexRemoteParser {
     private struct Payload: Decodable {
         let plan_type: String?
-        let account_id: String?
         let rate_limit: Details?
         let credits: Credits?
         let additional_rate_limits: [Additional]?
@@ -116,7 +115,7 @@ enum CodexRemoteParser {
             identity: CodexIdentity(
                 email: credentials.email,
                 planType: payload.plan_type ?? credentials.planType,
-                accountID: payload.account_id ?? credentials.accountID
+                accountID: credentials.accountID
             ),
             windows: windows,
             credits: credits,

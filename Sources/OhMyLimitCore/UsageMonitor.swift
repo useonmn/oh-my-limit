@@ -19,7 +19,9 @@ public struct AccountState: Identifiable, Sendable {
     public func isStale(at now: Date) -> Bool {
         guard let snapshot else { return false }
         let threshold: TimeInterval = profile.provider == .codex ? 150 : 660
-        return error != nil || now.timeIntervalSince(snapshot.fetchedAt) > threshold
+        let age = now.timeIntervalSince(snapshot.fetchedAt)
+        // A future fetch time means the clock moved backward: the age is unknown.
+        return error != nil || age < 0 || age > threshold
     }
 
     public var menuWindow: CodexQuotaWindow? {
@@ -336,9 +338,11 @@ public final class UsageMonitor: ObservableObject {
               let state = accounts.first(where: { $0.id == id }) else { return nil }
         if !manual {
             if let retry = retryDates[id], clock() < retry { return nil }
-            let interval: TimeInterval = state.profile.provider == .codex ? 45 : 300
-            if let last = state.snapshot?.fetchedAt, state.error == nil,
-               clock().timeIntervalSince(last) < interval { return nil }
+            if let last = state.snapshot?.fetchedAt, state.error == nil {
+                // A negative age means the clock moved backward; treat it as due.
+                let age = clock().timeIntervalSince(last)
+                if age >= 0, age < Self.refreshInterval(for: state.profile.provider) { return nil }
+            }
         }
         let fetchUsage: AntigravityFetch
         switch state.profile.provider {
@@ -390,9 +394,7 @@ public final class UsageMonitor: ObservableObject {
                     $0.error = error.localizedDescription
                     $0.needsKeychainAccess = (error as? any OAuthFailure)?.needsKeychainAccess == true
                 }
-                let count = min((self.failures[id] ?? 0) + 1, 5)
-                self.failures[id] = count
-                self.retryDates[id] = self.clock().addingTimeInterval(min(60 * pow(2, Double(count - 1)), 900))
+                self.recordFailure(id, provider: state.profile.provider, error: error)
             }
         }
         operations[id] = task
@@ -448,13 +450,23 @@ public final class UsageMonitor: ObservableObject {
                 case .claude:
                     identity = try await directClaude.login(profileID: id, onURL: onURL)
                 }
-                guard !Task.isCancelled, let self, self.generations[id] == generation else { return }
-                self.previousLoginIdentities[id] = nil
+                guard let self else { return }
+                let current = !Task.isCancelled && self.generations[id] == generation
+                // The keychain already holds the new credentials, so the identity is
+                // committed even if the login was cancelled meanwhile. Only the follow-up
+                // fetch and progress state belong to the cancelled generation.
+                if !current, self.previousLoginIdentities[id] != nil {
+                    // A newer login is pending; if it fails it must restore this identity.
+                    self.previousLoginIdentities[id] = identity
+                    return
+                }
                 guard var profile = self.accounts.first(where: { $0.id == id })?.profile else { return }
                 profile.oauthIdentity = identity
                 try self.store.save(self.accounts.map { $0.id == id ? profile : $0.profile })
+                self.previousLoginIdentities[id] = nil
+                self.update(id) { $0.profile = profile }
+                guard current else { return }
                 self.update(id) {
-                    $0.profile = profile
                     $0.isLoggingIn = false
                     $0.isRefreshing = true
                 }
@@ -484,9 +496,7 @@ public final class UsageMonitor: ObservableObject {
                     $0.needsKeychainAccess = (error as? any OAuthFailure)?.needsKeychainAccess == true
                 }
                 if authenticated {
-                    let count = min((self.failures[id] ?? 0) + 1, 5)
-                    self.failures[id] = count
-                    self.retryDates[id] = self.clock().addingTimeInterval(min(60 * pow(2, Double(count - 1)), 900))
+                    self.recordFailure(id, provider: state.profile.provider, error: error)
                 }
             }
         }
@@ -500,6 +510,23 @@ public final class UsageMonitor: ObservableObject {
         update(id) { $0.profile.oauthIdentity = identity }
         do { try store.save(accounts.map(\.profile)) }
         catch { notice = error.localizedDescription }
+    }
+
+    /// Automatic refresh interval for a healthy account.
+    private static func refreshInterval(for provider: AccountProvider) -> TimeInterval {
+        provider == .codex ? 45 : 300
+    }
+
+    /// Backs off exponentially; a rate-limited account also waits at least its normal
+    /// interval or the server's Retry-After, whichever is longer.
+    private func recordFailure(_ id: UUID, provider: AccountProvider, error: any Error) {
+        let count = min((failures[id] ?? 0) + 1, 5)
+        failures[id] = count
+        var delay = min(60 * pow(2, Double(count - 1)), 900)
+        if case .rateLimited(let retryAfter)? = error as? ClaudeClientError {
+            delay = max(delay, retryAfter ?? 0, Self.refreshInterval(for: provider))
+        }
+        retryDates[id] = clock().addingTimeInterval(delay)
     }
 
     private func update(_ id: UUID, _ body: (inout AccountState) -> Void) {

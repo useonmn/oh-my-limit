@@ -17,11 +17,11 @@ xcrun iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 # A stable self-signed identity keeps Keychain/TCC grants across rebuilds;
 # ad-hoc signing makes macOS re-prompt on every access.
 # Without -v so an untrusted self-signed identity still counts; find-identity
-# only lists certificates whose private key is present.
-if security find-identity -p codesigning | grep '"Oh My Limit Dev"' >/dev/null; then
-    IDENTITY="Oh My Limit Dev"
-else
-    IDENTITY="-"
-fi
+# only lists certificates whose private key is present. Sign by SHA-1 hash so
+# duplicate certificates with the same name do not make codesign ambiguous.
+IDENTITY="$(security find-identity -p codesigning 2>/dev/null \
+    | awk -v name='"Oh My Limit Dev"' 'index($0, name) && $2 ~ /^[0-9A-F]{40}$/ { print $2; exit }' \
+    || true)"
+IDENTITY="${IDENTITY:--}"
 /usr/bin/codesign --force --sign "$IDENTITY" "$APP"
 printf 'Built %s\n' "$APP"

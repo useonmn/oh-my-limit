@@ -10,7 +10,7 @@ private final class AccountDraft: ObservableObject {
 
 struct SettingsView: View {
     @ObservedObject var monitor: UsageMonitor
-    @StateObject private var launchAtLogin = LaunchAtLoginController()
+    @ObservedObject var launchAtLogin: LaunchAtLoginController
     let loginAntigravity: () -> Void
     let connectAntigravity: () -> Void
     let openAntigravity: () -> Void
@@ -53,12 +53,11 @@ struct SettingsView: View {
                         .font(Theme.caption)
                 }
                 if let error = launchAtLogin.errorMessage {
-                    Text(error).font(Theme.caption).foregroundStyle(Theme.warningText)
+                    WarningLabel(text: error)
                 }
             }
             if let notice = monitor.notice {
-                Text(notice).font(Theme.body).foregroundStyle(Theme.warningText)
-                    .fixedSize(horizontal: false, vertical: true)
+                WarningLabel(text: notice)
             }
 
             panelGroup {
@@ -196,9 +195,12 @@ private struct AccountSettingsRow: View {
                             Text(state.profile.name).font(Theme.settingsBody.weight(.semibold))
                                 .lineLimit(1).help(state.profile.name)
                             Spacer(minLength: 0)
-                            Text(status).font(Theme.caption)
-                                .foregroundStyle(state.error == nil ? Theme.panelSecondary : Theme.warningText)
-                                .lineLimit(1)
+                            if state.error == nil {
+                                Text(status).font(Theme.caption).foregroundStyle(Theme.panelSecondary)
+                                    .lineLimit(1)
+                            } else {
+                                WarningLabel(text: status).lineLimit(1)
+                            }
                         }
                         Text(connectionDescription)
                             .font(Theme.caption).foregroundStyle(Theme.panelSecondary)
@@ -236,8 +238,7 @@ private struct AccountSettingsRow: View {
             }
             .buttonStyle(.borderless)
             if let error = state.error {
-                Text(error).font(Theme.caption).foregroundStyle(Theme.warningText)
-                    .fixedSize(horizontal: false, vertical: true)
+                WarningLabel(text: error)
             }
             if state.needsKeychainAccess && !state.isLoggingIn {
                 Button("키체인 접근 허용", action: onAuthorizeKeychain)
@@ -246,7 +247,7 @@ private struct AccountSettingsRow: View {
             }
             if state.isLoggingIn {
                 Button("로그인 취소", action: onCancel)
-                    .font(Theme.caption).buttonStyle(.borderless)
+                    .font(Theme.caption).buttonStyle(.borderless).foregroundStyle(Theme.link)
             }
         }
         .onAppear { draft.name = state.profile.name }

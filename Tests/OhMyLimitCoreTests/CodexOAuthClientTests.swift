@@ -91,6 +91,17 @@ import Testing
         #expect(snapshot.windows.map(\.id) == ["codex.primary"])
     }
 
+    @Test func usageForbiddenDoesNotRequestSignIn() async throws {
+        for (status, expected) in [(401, CodexOAuthError.signInRequired), (403, .authorizationFailed(403))] {
+            let client = CodexRemoteClient(usageURL: "https://usage.invalid/wham/usage", transport: { request in
+                oauthResponse(request, body: "{}", status: status)
+            })
+            await #expect(throws: expected) {
+                try await client.fetchUsage(codexCredentials())
+            }
+        }
+    }
+
     @Test func credentialsParseIdentityFromIDToken() throws {
         let tokens = CodexOAuthClient.TokenResponse(
             access_token: "access+&%", refresh_token: "refresh+&%",
@@ -153,11 +164,13 @@ import Testing
         await #expect(throws: CodexOAuthError.authorizationFailed(500)) {
             try await client.refresh(codexCredentials())
         }
-        let rejected = CodexOAuthClient(issuer: "https://issuer.invalid", clientID: "c", transport: { request in
-            oauthResponse(request, body: "{}", status: 400)
-        })
-        await #expect(throws: CodexOAuthError.signInRequired) {
-            try await rejected.refresh(codexCredentials())
+        for status in [400, 401] {
+            let rejected = CodexOAuthClient(issuer: "https://issuer.invalid", clientID: "c", transport: { request in
+                oauthResponse(request, body: "{}", status: status)
+            })
+            await #expect(throws: CodexOAuthError.signInRequired) {
+                try await rejected.refresh(codexCredentials())
+            }
         }
         let failure = CodexOAuthClient(issuer: "https://issuer.invalid", clientID: "c", transport: { _ in
             throw URLError(.cannotConnectToHost)
@@ -213,7 +226,7 @@ import Testing
         let snapshot = try CodexRemoteParser.usage(from: Data(body.utf8), credentials: codexCredentials())
         #expect(snapshot.source == .codexOAuth)
         #expect(snapshot.identity.email == codexCredentials().email)
-        #expect(snapshot.identity.accountID == "acct-9")
+        #expect(snapshot.identity.accountID == "acct-1")
         #expect(snapshot.identity.planType == "pro")
         #expect(snapshot.windows.count == 3)
         let primary = try #require(snapshot.windows.first { $0.id == "codex.primary" })

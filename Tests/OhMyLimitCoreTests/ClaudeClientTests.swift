@@ -58,6 +58,49 @@ struct ClaudeClientTests {
         await server.stop()
     }
 
+    @Test func usageRequestCarriesOAuthBetaHeader() async throws {
+        let server = try AntigravityLoopbackFixture { request in
+            let beta = request.lowercased().contains("\r\nanthropic-beta: oauth-2025-04-20\r\n")
+            return beta ? AntigravityLoopbackFixture.response(#"{"seven_day":{"utilization":7}}"#)
+                : AntigravityLoopbackFixture.response("", status: 401)
+        }
+        let port = try await server.start()
+        do {
+            let client = ClaudeClient(usageURL: URL(string: "http://127.0.0.1:\(port)/usage")!)
+            let usage = try await client.fetchUsage(accessToken: "fixture", identity: CodexIdentity())
+            #expect(usage.windows.first?.usedPercent == 7)
+            let request = try #require(await server.requests().first)
+            #expect(request.lowercased().contains("\r\nanthropic-beta: oauth-2025-04-20\r\n"))
+        } catch { await server.stop(); throw error }
+        await server.stop()
+    }
+
+    @Test(arguments: [("Retry-After: 120\r\n", 120.0 as TimeInterval?), ("", nil)])
+    func rateLimitKeepsRetryAfter(_ header: String, _ expected: TimeInterval?) async throws {
+        let server = try AntigravityLoopbackFixture { _ in
+            AntigravityLoopbackFixture.response("", status: 429, headers: header)
+        }
+        let port = try await server.start()
+        let client = ClaudeClient(usageURL: URL(string: "http://127.0.0.1:\(port)/usage")!)
+        await #expect(throws: ClaudeClientError.rateLimited(retryAfter: expected)) {
+            try await client.fetchUsage(accessToken: "fixture", identity: CodexIdentity())
+        }
+        await server.stop()
+    }
+
+    @Test func retryAfterParsesHTTPDateAndClamps() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+        #expect(ClaudeClient.retryAfter(formatter.string(from: now.addingTimeInterval(90)), now: now) == 90)
+        #expect(ClaudeClient.retryAfter(formatter.string(from: now.addingTimeInterval(-90)), now: now) == 0)
+        #expect(ClaudeClient.retryAfter("999999", now: now) == 3600)
+        #expect(ClaudeClient.retryAfter("soon", now: now) == nil)
+        #expect(ClaudeClient.retryAfter(nil, now: now) == nil)
+    }
+
     @Test func newerLimitsPreserveWeeklyAndModelBoundaries() throws {
         let data = Data(#"""
         {"limits":[

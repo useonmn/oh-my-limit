@@ -34,22 +34,20 @@ protocol AntigravityOAuthSecurity: Sendable {
 }
 
 struct OAuthSystemSecurity: AntigravityOAuthSecurity {
-    private static let lock = NSLock()
+    private static let gate = Gate()
 
     // The login Keychain ignores LAContext's per-query UI policy. The process
     // switch must therefore remain locked against interactive SecItem calls.
-    // Background calls fail fast while ANY call owns it: they cannot wait on a
-    // prompt, touch the switch during a prompt, or accidentally show their own.
-    // Interactive calls serialize; the async direct flow dispatches blocking
-    // Security work off the cooperative executor.
+    // Background calls fail fast while an interactive call owns or awaits it:
+    // they cannot wait on a prompt, touch the switch during a prompt, or
+    // accidentally show their own. Background calls only wait behind other
+    // (short) background calls. Interactive calls serialize with everything;
+    // the async direct flow dispatches blocking Security work off the
+    // cooperative executor.
     static func perform(_ query: [String: Any], operation: () -> OSStatus) -> OSStatus {
         let noninteractive = (query[kSecUseAuthenticationContext as String] as? LAContext)?.interactionNotAllowed == true
-        if noninteractive {
-            guard lock.try() else { return errSecInteractionNotAllowed }
-        } else {
-            lock.lock()
-        }
-        defer { lock.unlock() }
+        guard gate.acquire(interactive: !noninteractive) else { return errSecInteractionNotAllowed }
+        defer { gate.release() }
         guard noninteractive else { return operation() }
         var previous: DarwinBoolean = false
         let readStatus = SecKeychainGetUserInteractionAllowed(&previous)
@@ -59,6 +57,42 @@ struct OAuthSystemSecurity: AntigravityOAuthSecurity {
         let status = operation()
         let restoreStatus = SecKeychainSetUserInteractionAllowed(previous.boolValue)
         return restoreStatus == errSecSuccess ? status : restoreStatus
+    }
+
+    /// Single-holder admission. The condition lock is never held while the
+    /// Security operation runs.
+    private final class Gate: @unchecked Sendable {
+        private enum Holder { case none, background, interactive }
+        private let condition = NSCondition()
+        private var holder = Holder.none
+        private var interactiveWaiting = 0
+
+        /// Returns false only for a background call facing an interactive one.
+        func acquire(interactive: Bool) -> Bool {
+            condition.lock()
+            defer { condition.unlock() }
+            if interactive {
+                interactiveWaiting += 1
+                while holder != .none { condition.wait() }
+                interactiveWaiting -= 1
+                holder = .interactive
+                return true
+            }
+            while true {
+                if holder == .interactive || interactiveWaiting > 0 { return false }
+                if holder == .none { break }
+                condition.wait()
+            }
+            holder = .background
+            return true
+        }
+
+        func release() {
+            condition.lock()
+            holder = .none
+            condition.broadcast()
+            condition.unlock()
+        }
     }
 
     func copyMatching(_ query: [String: Any]) -> (OSStatus, Data?) {

@@ -32,8 +32,9 @@ final class LaunchAtLoginController: ObservableObject {
         }
         guard isAvailable, !UserDefaults.standard.bool(forKey: firstRunKey) else { return }
         // Only the first eligible normal launch opts in; later launches honor system changes.
-        UserDefaults.standard.set(true, forKey: firstRunKey)
+        // A failed first registration is retried on the next launch.
         if status == .notRegistered { setEnabled(true) }
+        else if isEnabled { UserDefaults.standard.set(true, forKey: firstRunKey) }
     }
 
     func refreshStatus() { status = SMAppService.mainApp.status }
@@ -44,6 +45,8 @@ final class LaunchAtLoginController: ObservableObject {
             if enabled { try SMAppService.mainApp.register() }
             else { try SMAppService.mainApp.unregister() }
             errorMessage = nil
+            // Any successful change, automatic or from Settings, settles the first-run opt-in.
+            UserDefaults.standard.set(true, forKey: firstRunKey)
         } catch {
             errorMessage = "로그인 시 실행 설정을 변경하지 못했습니다: \(error.localizedDescription)"
         }

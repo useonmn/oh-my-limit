@@ -1,8 +1,9 @@
 import Foundation
 
-public enum ClaudeClientError: Error, LocalizedError, Sendable {
+public enum ClaudeClientError: Error, LocalizedError, Sendable, Equatable {
     case unauthorized
-    case rateLimited
+    /// `retryAfter` is the server's Retry-After in seconds, clamped to 0...3600; nil when absent or unparseable.
+    case rateLimited(retryAfter: TimeInterval?)
     case requestFailed
     case invalidResponse
 
@@ -28,13 +29,13 @@ public struct ClaudeClient: Sendable {
         self.usageURL = usageURL
     }
 
-    public func fetchUsage(accessToken: String, identity: CodexIdentity,
-                           source: UsageSource = .claudeOAuth) async throws -> CodexUsageSnapshot {
+    public func fetchUsage(accessToken: String, identity: CodexIdentity) async throws -> CodexUsageSnapshot {
         try Task.checkCancellation()
         var request = URLRequest(url: usageURL)
         request.timeoutInterval = 12
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         request.setValue("OhMyLimit", forHTTPHeaderField: "User-Agent")
         let data: Data
         let response: HTTPURLResponse
@@ -51,11 +52,31 @@ public struct ClaudeClient: Sendable {
         switch response.statusCode {
         case 200: break
         case 401, 403: throw ClaudeClientError.unauthorized
-        case 429: throw ClaudeClientError.rateLimited
+        case 429:
+            throw ClaudeClientError.rateLimited(
+                retryAfter: Self.retryAfter(response.value(forHTTPHeaderField: "Retry-After"), now: Date())
+            )
         default: throw ClaudeClientError.requestFailed
         }
-        guard data.count <= 1_048_576 else { throw ClaudeClientError.invalidResponse }
-        return try ClaudeUsageParser.parse(data, identity: identity, source: source)
+        return try ClaudeUsageParser.parse(data, identity: identity, source: .claudeOAuth)
+    }
+
+    /// Parses Retry-After as delta-seconds or an HTTP-date relative to `now`, clamped to 0...3600.
+    static func retryAfter(_ value: String?, now: Date) -> TimeInterval? {
+        guard let text = value?.trimmingCharacters(in: .whitespaces), !text.isEmpty else { return nil }
+        let seconds: TimeInterval
+        if text.allSatisfy(\.isASCII), text.allSatisfy(\.isNumber) {
+            seconds = TimeInterval(text) ?? 3600
+        } else {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(identifier: "GMT")
+            formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+            guard let date = formatter.date(from: text) else { return nil }
+            seconds = date.timeIntervalSince(now)
+        }
+        guard seconds.isFinite else { return nil }
+        return min(max(seconds, 0), 3600)
     }
 }
 

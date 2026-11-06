@@ -54,26 +54,19 @@ enum Theme {
     static let panelPrimary = Color(nsColor: .labelColor)
     static let panelSecondary = Color(nsColor: .secondaryLabelColor)
     static let mint = adaptive(light: 0x0B9E6B, dark: 0x30E8A0)
+    /// Account login and login cancellation (DESIGN §5).
+    static let link = Color(nsColor: .linkColor)
     static let panelWarning = adaptive(light: 0x9A4E00, dark: 0xFFB45E)
     static let panelCritical = adaptive(light: 0xD92D20, dark: 0xFF654F)
     static let panelSeparator = Color(nsColor: .separatorColor)
     static let small: CGFloat = 4
     static let compact: CGFloat = 8
     static let gap: CGFloat = 12
-    static let padding: CGFloat = 16
-    static let radius: CGFloat = 12
     static let barHeight: CGFloat = 4
     static let account = Font.system(size: 14, weight: .semibold)
     static let body = Font.system(size: 13)
     static let caption = Font.system(size: 11)
     static let panelGroup = Color.primary.opacity(0.055)
-    static let warningText = Color(nsColor: NSColor(name: "UsageWarning") { appearance in
-        if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            NSColor(calibratedRed: 1, green: 0.65, blue: 0.20, alpha: 1)
-        } else {
-            NSColor(calibratedRed: 0.60, green: 0.30, blue: 0, alpha: 1)
-        }
-    })
 
     static func usageColor(_ percent: Double) -> Color {
         percent >= 95 ? panelCritical : percent >= 80 ? panelWarning : mint
@@ -82,7 +75,7 @@ enum Theme {
     private static func adaptive(light: UInt32, dark: UInt32) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             let hex = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
-            return NSColor(calibratedRed: Double((hex >> 16) & 255) / 255,
+            return NSColor(srgbRed: Double((hex >> 16) & 255) / 255,
                            green: Double((hex >> 8) & 255) / 255,
                            blue: Double(hex & 255) / 255, alpha: 1)
         })
@@ -119,7 +112,7 @@ extension View {
 
     /// Quiet inset group on the menu surface: a faint fill and a hairline,
     /// like the grouped rows in Control Center panels.
-    func menuGroup(radius: CGFloat = Theme.radius) -> some View {
+    func menuGroup(radius: CGFloat = Theme.panelGroupRadius) -> some View {
         modifier(MenuGroup(radius: radius))
     }
 

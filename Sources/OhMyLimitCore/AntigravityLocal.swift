@@ -118,7 +118,7 @@ enum AntigravityLocal {
             candidates.append((pid, source, token))
         }
         candidates.sort { rank($0.1) < rank($1.1) }
-        var endpoints: [AntigravityEndpoint] = []
+        var groups: [[AntigravityEndpoint]] = []
         // Bounds both subprocess count and port probing in a machine with many open workspaces.
         for (pid, source, csrf) in candidates.prefix(4) {
             do {
@@ -131,11 +131,20 @@ enum AntigravityLocal {
                       classify(path: String(decoding: pathBytes.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self), officialCLI: officialCLI) == source,
                       proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout.size(ofValue: info))) == MemoryLayout.size(ofValue: info),
                       info.pbi_uid == getuid() else { continue }
-                endpoints += ports(data).prefix(4).map { AntigravityEndpoint(port: $0, csrf: csrf, source: source) }
+                groups.append(ports(data).prefix(4).map { AntigravityEndpoint(port: $0, csrf: csrf, source: source) })
             } catch {
                 if error is CancellationError { throw error }
                 try Task.checkCancellation()
             }
+        }
+        return interleave(groups)
+    }
+
+    /// Round-robin across rank-ordered candidates so the bounded probe prefix covers distinct processes.
+    static func interleave(_ groups: [[AntigravityEndpoint]]) -> [AntigravityEndpoint] {
+        var endpoints: [AntigravityEndpoint] = []
+        for round in 0..<(groups.map(\.count).max() ?? 0) {
+            endpoints += groups.compactMap { round < $0.count ? $0[round] : nil }
         }
         return endpoints
     }

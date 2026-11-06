@@ -11,6 +11,16 @@ import Testing
         ) == nil)
     }
 
+    @Test func probePrefixCoversDistinctCandidatesBeforeExtraPorts() {
+        let groups = [[1, 2, 3, 4], [11, 12], [21]].enumerated().map { index, ports in
+            ports.map { AntigravityEndpoint(port: $0, csrf: "c\(index)", source: index == 0 ? .antigravityApp : .antigravityIDE) }
+        }
+        let endpoints = AntigravityLocal.interleave(groups)
+        #expect(endpoints.map(\.port) == [1, 11, 21, 2, 12, 3, 4])
+        #expect(endpoints.prefix(3).map(\.csrf) == ["c0", "c1", "c2"])
+        #expect(AntigravityLocal.interleave([]).isEmpty)
+    }
+
     @Test(arguments: [true, false])
     func summaryQuotaSurvivesOptionalIdentityLookup(_ identityAvailable: Bool) async throws {
         let server = try AntigravityLoopbackFixture { request in

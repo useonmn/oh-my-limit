@@ -86,9 +86,19 @@ final class AntigravityCommand: @unchecked Sendable {
         defer { posix_spawn_file_actions_destroy(&actions) }
         guard posix_spawnattr_init(&attributes) == 0 else { throw AntigravityClientError.launchFailed }
         defer { posix_spawnattr_destroy(&attributes) }
-        let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)
+        // Spawning runs on a GCD thread whose mask blocks SIGTERM; reset mask and dispositions
+        // so the child can receive the graceful group SIGTERM before the SIGKILL fallback.
+        var mask = sigset_t()
+        var defaults = sigset_t()
+        sigemptyset(&mask)
+        sigfillset(&defaults)
+        sigdelset(&defaults, SIGKILL)
+        sigdelset(&defaults, SIGSTOP)
+        let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF)
         guard posix_spawnattr_setflags(&attributes, flags) == 0,
               posix_spawnattr_setpgroup(&attributes, 0) == 0,
+              posix_spawnattr_setsigmask(&attributes, &mask) == 0,
+              posix_spawnattr_setsigdefault(&attributes, &defaults) == 0,
               posix_spawn_file_actions_addchdir_np(&actions, directory.path) == 0,
               posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0) == 0,
               posix_spawn_file_actions_adddup2(&actions, stdout.fileHandleForWriting.fileDescriptor, STDOUT_FILENO) == 0,

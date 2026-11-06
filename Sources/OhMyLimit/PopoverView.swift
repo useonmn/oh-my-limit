@@ -69,7 +69,7 @@ struct AccountCard: View {
                         .font(Theme.panelBody).fixedSize(horizontal: false, vertical: true)
                 }
                 Button("로그인 취소", action: cancel).buttonStyle(.borderless).controlSize(.small)
-                    .foregroundStyle(Theme.mint)
+                    .foregroundStyle(Theme.link)
             } else if let snapshot = state.snapshot {
                 ForEach(snapshot.windows) { window in
                     QuotaRow(window: window, now: now)
@@ -106,7 +106,7 @@ struct AccountCard: View {
                     }
                 } else {
                     Button(loginLabel, action: login)
-                        .buttonStyle(.borderless).controlSize(.small).foregroundStyle(Theme.mint)
+                        .buttonStyle(.borderless).controlSize(.small).foregroundStyle(Theme.link)
                 }
             }
 

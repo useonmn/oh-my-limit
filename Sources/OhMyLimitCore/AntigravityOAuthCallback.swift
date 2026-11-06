@@ -3,7 +3,9 @@ import Network
 
 /// All mutable state, listener events, connection events and cancellation run on one queue.
 final class AntigravityOAuthCallback: @unchecked Sendable {
-    enum ParsedRequest: Equatable { case incomplete, ignored, code(String), denied, failed }
+    enum ParsedRequest: Equatable { case incomplete, ignored, code(String), denied, failed, tooLarge }
+    /// Browsers attach every `localhost` cookie to the callback, so the cap must leave room for large Cookie headers.
+    static let maxRequestBytes = 65_536
 
     private let queue = DispatchQueue(label: "local.ohmylimit.antigravity.oauth.callback")
     private var listener: NWListener
@@ -182,14 +184,24 @@ final class AntigravityOAuthCallback: @unchecked Sendable {
             switch parsed {
             case .code(let code): outcome = .success(code)
             case .denied: outcome = .failure(AntigravityOAuthError.userCancelled)
-            case .failed: outcome = .failure(AntigravityOAuthError.invalidResponse)
+            case .failed, .tooLarge: outcome = .failure(AntigravityOAuthError.invalidResponse)
             default: outcome = nil
             }
             if outcome != nil { self.accepted = true }
             // Constant documents only: no auth material is reflected in HTML or headers.
-            let body = outcome == nil ? "<!doctype html><title>Not found</title>Not found."
-                : "<!doctype html><title>Return to OhMyLimit</title>You can close this window and return to OhMyLimit."
-            let status = outcome == nil ? "404 Not Found" : "200 OK"
+            let body: String
+            let status: String
+            switch (parsed, outcome) {
+            case (.tooLarge, _):
+                body = "<!doctype html><title>Sign-in failed</title>The sign-in request was too large. Return to OhMyLimit and try again."
+                status = "431 Request Header Fields Too Large"
+            case (_, nil):
+                body = "<!doctype html><title>Not found</title>Not found."
+                status = "404 Not Found"
+            default:
+                body = "<!doctype html><title>Return to OhMyLimit</title>You can close this window and return to OhMyLimit."
+                status = "200 OK"
+            }
             let response = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.utf8.count)\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n\(body)"
             connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in
                 self.close(id)
@@ -219,14 +231,12 @@ final class AntigravityOAuthCallback: @unchecked Sendable {
     }
 
     static func parse(_ data: Data, state: String, path: String = "/callback") -> ParsedRequest {
-        guard data.count <= 16_384 else { return .ignored }
+        guard data.count <= maxRequestBytes else { return oversized(data, state: state, path: path) }
         guard let end = data.range(of: Data("\r\n\r\n".utf8)) else { return .incomplete }
         guard end.upperBound == data.endIndex,
               let header = String(data: data[..<end.lowerBound], encoding: .utf8) else { return .ignored }
         let lines = header.components(separatedBy: "\r\n")
-        let request = lines[0].split(separator: " ", omittingEmptySubsequences: false)
-        guard request.count == 3, request[0] == "GET", ["HTTP/1.1", "HTTP/1.0"].contains(request[2]),
-              request[1].utf8.allSatisfy({ (33...126).contains($0) }), !request[1].contains("#") else { return .ignored }
+        guard let target = callbackQuery(lines[0], path: path) else { return .ignored }
         var contentLengths = 0
         for line in lines.dropFirst() {
             guard let colon = line.firstIndex(of: ":") else { return .ignored }
@@ -239,17 +249,7 @@ final class AntigravityOAuthCallback: @unchecked Sendable {
                 guard contentLengths == 1, value == "0" else { return .ignored }
             }
         }
-        let target = request[1].split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
-        guard target.count == 2, target[0] == path else { return .ignored }
-        var fields: [String: [String]] = [:]
-        for pair in target[1].split(separator: "&", omittingEmptySubsequences: false) {
-            let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-            guard parts.count == 2,
-                  let name = String(parts[0]).replacingOccurrences(of: "+", with: " ").removingPercentEncoding,
-                  let value = String(parts[1]).replacingOccurrences(of: "+", with: " ").removingPercentEncoding else { return .ignored }
-            fields[name, default: []].append(value)
-        }
-        guard let states = fields["state"], states.count == 1, constantTimeEqual(states[0], state) else { return .ignored }
+        guard let fields = callbackFields(target, state: state) else { return .ignored }
         if let codes = fields["code"] {
             guard codes.count == 1, fields["error"] == nil, !codes[0].isEmpty,
                   codes[0].utf8.count <= 8192, codes[0].utf8.allSatisfy({ (33...126).contains($0) }) else { return .ignored }
@@ -257,6 +257,40 @@ final class AntigravityOAuthCallback: @unchecked Sendable {
         }
         guard let errors = fields["error"], errors.count == 1, !errors[0].isEmpty else { return .ignored }
         return errors[0] == "access_denied" ? .denied : .failed
+    }
+
+    /// Over the cap, fail the login only for a well-formed GET to the callback path carrying the matching state;
+    /// anything else stays ignored so unrelated pages cannot abort a login.
+    private static func oversized(_ data: Data, state: String, path: String) -> ParsedRequest {
+        guard let lineEnd = data.range(of: Data("\r\n".utf8)),
+              let line = String(data: data[..<lineEnd.lowerBound], encoding: .utf8),
+              let target = callbackQuery(line, path: path),
+              callbackFields(target, state: state) != nil else { return .ignored }
+        return .tooLarge
+    }
+
+    /// Returns the query of a `GET <path>?<query> HTTP/1.x` request line, or nil.
+    private static func callbackQuery(_ line: String, path: String) -> Substring? {
+        let request = line.split(separator: " ", omittingEmptySubsequences: false)
+        guard request.count == 3, request[0] == "GET", ["HTTP/1.1", "HTTP/1.0"].contains(request[2]),
+              request[1].utf8.allSatisfy({ (33...126).contains($0) }), !request[1].contains("#") else { return nil }
+        let target = request[1].split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        guard target.count == 2, target[0] == path else { return nil }
+        return target[1]
+    }
+
+    /// Decodes the query, requiring exactly one constant-time-matching `state`.
+    private static func callbackFields(_ query: Substring, state: String) -> [String: [String]]? {
+        var fields: [String: [String]] = [:]
+        for pair in query.split(separator: "&", omittingEmptySubsequences: false) {
+            let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2,
+                  let name = String(parts[0]).replacingOccurrences(of: "+", with: " ").removingPercentEncoding,
+                  let value = String(parts[1]).replacingOccurrences(of: "+", with: " ").removingPercentEncoding else { return nil }
+            fields[name, default: []].append(value)
+        }
+        guard let states = fields["state"], states.count == 1, constantTimeEqual(states[0], state) else { return nil }
+        return fields
     }
 
     private static func constantTimeEqual(_ lhs: String, _ rhs: String) -> Bool {

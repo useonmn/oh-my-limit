@@ -48,6 +48,7 @@ extension ApplicationDelegate {
             let model = UsageMonitor(store: store)
             let settings = AnyView(SettingsView(
                 monitor: model,
+                launchAtLogin: LaunchAtLoginController(),
                 loginAntigravity: {}, connectAntigravity: {}, openAntigravity: {}, loginCodex: {},
                 loginClaudeAccount: {},
                 renameAccount: { _, _ in }, refreshAccount: { _ in }, loginAccount: { _ in },

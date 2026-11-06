@@ -518,6 +518,119 @@ struct UsageMonitorTests {
         await (try #require(monitor.refresh(id, manual: false))).value
     }
 
+    private func claudeAccount(
+        root: URL, security: any AntigravityOAuthSecurity = OAuthFakeSecurity(),
+        setupSecurity: (any AntigravityOAuthSecurity)? = nil,
+        authenticate: @escaping @Sendable (@escaping @Sendable (URL) -> Void) async throws -> ClaudeOAuthCredentials = { _ in
+            Issue.record("Unexpected Claude login")
+            throw ClaudeOAuthError.signInRequired
+        },
+        fetch: @escaping @Sendable (ClaudeOAuthCredentials) async throws -> CodexUsageSnapshot,
+        clock: @escaping @Sendable () -> Date
+    ) throws -> (UsageMonitor, AccountProfile, ClaudeOAuthKeychain) {
+        let service = "fixture.claude.monitor"
+        let keychain = ClaudeOAuthKeychain(service: service, security: setupSecurity ?? security)
+        let credentials = claudeCredentials(1)
+        let profile = AccountProfile(
+            name: "Claude", homePath: root.path, isManaged: false, provider: .claude,
+            authentication: .oauth, oauthIdentity: credentials.identity
+        )
+        try keychain.save(credentials, profileID: profile.id)
+        let store = AccountStore(directory: root)
+        try store.save([profile])
+        let monitor = makeMonitor(
+            store: store, directClaude: ClaudeDirectClient(
+                keychain: ClaudeOAuthKeychain(service: service, security: security),
+                authenticate: authenticate, renew: { _ in
+                    Issue.record("Unexpected Claude renewal")
+                    throw ClaudeOAuthError.signInRequired
+                }, fetch: fetch, clock: clock
+            ), clock: clock
+        )
+        return (monitor, profile, keychain)
+    }
+
+    nonisolated private func claudeCredentials(_ index: Int) -> ClaudeOAuthCredentials {
+        ClaudeOAuthCredentials(
+            accessToken: "fixture-access-\(index)", refreshToken: "fixture-refresh-\(index)",
+            expiresAt: now.addingTimeInterval(86_400), accountID: "acct-\(index)",
+            email: "claude-\(index)@example.invalid"
+        )
+    }
+
+    @Test(arguments: [(TimeInterval?.some(1200), 1200.0), (nil, 300.0), (10, 300.0)])
+    func claudeRateLimitWaitsForRetryAfterOrTheNormalInterval(_ row: (TimeInterval?, TimeInterval)) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("RateLimit-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let clock = MonitorClock(now)
+        let (monitor, profile, _) = try claudeAccount(
+            root: root, fetch: { _ in throw ClaudeClientError.rateLimited(retryAfter: row.0) }, clock: { clock.now }
+        )
+        await (try #require(monitor.refresh(profile.id))).value
+        #expect(monitor.accounts[0].error != nil)
+
+        clock.advance(by: row.1 - 1)
+        #expect(monitor.refresh(profile.id, manual: false) == nil)
+        clock.advance(by: 1)
+        await (try #require(monitor.refresh(profile.id, manual: false))).value
+    }
+
+    @Test func clockMovingBackwardMakesTheSnapshotStaleAndDue() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClockBack-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let clock = MonitorClock(now)
+        let data = snapshot(identity: credentials(1).identity)
+        let (monitor, profiles) = try codexAccounts(
+            ["Codex"], root: root, fetch: { _ in data }, clock: { clock.now }
+        )
+        let id = profiles[0].id
+        await (try #require(monitor.refresh(id))).value
+        #expect(!monitor.accounts[0].isStale(at: clock.now))
+        #expect(monitor.refresh(id, manual: false) == nil)
+
+        clock.advance(by: -3600)
+
+        #expect(monitor.accounts[0].isStale(at: clock.now))
+        await (try #require(monitor.refresh(id, manual: false))).value
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func loginCancelledAfterCredentialsWereSavedKeepsProfileAndKeychainInSync() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("LoginCommit-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fake = OAuthFakeSecurity()
+        let security = SaveSignalingSecurity(fake)
+        let gate = MonitorGate<ClaudeOAuthCredentials>()
+        var started = gate.started.makeAsyncIterator()
+        let replacement = claudeCredentials(2)
+        let (monitor, profile, keychain) = try claudeAccount(
+            root: root, security: security, setupSecurity: fake, authenticate: { _ in await gate.wait() },
+            fetch: { _ in
+                Issue.record("A cancelled login must not fetch usage")
+                throw ClaudeClientError.requestFailed
+            }, clock: { Date(timeIntervalSince1970: 1_789_400_000) }
+        )
+        let id = profile.id
+        let login = monitor.login(id, onURL: { _ in })
+        let task = try #require(login)
+        _ = await started.next()
+
+        Task.detached { await gate.release(replacement) }
+        // Keep the main actor busy until the direct login has saved and returned, so
+        // the cancel below runs before the monitor's task resumes with the identity.
+        #expect(blockUntilSaved(security))
+        monitor.cancel(id)
+        await task.value
+
+        let saved = try #require(try keychain.load(profileID: id))
+        // Proves the cancel landed after the flow committed; otherwise the race was not exercised.
+        #expect(saved.identity == replacement.identity)
+        #expect(monitor.accounts[0].profile.oauthIdentity == saved.identity)
+        #expect(try monitor.store.load()[0].oauthIdentity == saved.identity)
+        #expect(!monitor.accounts[0].isLoggingIn)
+        #expect(!monitor.accounts[0].isRefreshing)
+    }
+
     @Test func cacheRestoresOnlyTheSameProfileHome() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -773,6 +886,32 @@ private struct UnexpectedMonitorSecurity: AntigravityOAuthSecurity {
         Issue.record("Unexpected Keychain delete")
         return errSecAuthFailed
     }
+}
+
+/// Signals each successful credential write so a test can tell when a login saved.
+private final class SaveSignalingSecurity: AntigravityOAuthSecurity, @unchecked Sendable {
+    private let base: OAuthFakeSecurity
+    let saved = DispatchSemaphore(value: 0)
+
+    init(_ base: OAuthFakeSecurity) { self.base = base }
+    func copyMatching(_ query: [String: Any]) -> (OSStatus, Data?) { base.copyMatching(query) }
+    func add(_ attributes: [String: Any]) -> OSStatus {
+        defer { saved.signal() }
+        return base.add(attributes)
+    }
+    func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus {
+        defer { saved.signal() }
+        return base.update(query, attributes: attributes)
+    }
+    func delete(_ query: [String: Any]) -> OSStatus { base.delete(query) }
+}
+
+/// Blocks the calling thread (the main actor) until a credential write, then gives the
+/// direct login a moment to pass its post-save cancellation check and return.
+private func blockUntilSaved(_ security: SaveSignalingSecurity) -> Bool {
+    guard security.saved.wait(timeout: .now() + 10) == .success else { return false }
+    Thread.sleep(forTimeInterval: 0.2)
+    return true
 }
 
 private final class MonitorClock: @unchecked Sendable {

@@ -246,7 +246,6 @@ private final class AntigravityRemoteSession: NSObject, URLSessionTaskDelegate, 
         configuration.httpShouldSetCookies = false
         configuration.urlCredentialStorage = nil
         configuration.urlCache = nil
-        configuration.connectionProxyDictionary = [:]
         configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = timeout
         configuration.waitsForConnectivity = false
@@ -265,7 +264,8 @@ private final class AntigravityRemoteSession: NSObject, URLSessionTaskDelegate, 
         } else {
             // cancelAuthenticationChallenge can surface as URLError.cancelled. Record its actual
             // cause before completing; unlike rejectProtectionSpace, this cannot retry the request.
-            lock.withLock { authenticationRejected = true }
+            // A proxy's own challenge is a network problem, not an expired Google sign-in.
+            if !challenge.protectionSpace.isProxy() { lock.withLock { authenticationRejected = true } }
             completionHandler(.cancelAuthenticationChallenge, nil)
         }
     }

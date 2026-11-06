@@ -42,6 +42,32 @@ import Testing
         attempted.continuation.finish()
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func concurrentBackgroundCallsWaitForEachOtherInsteadOfFailing() async throws {
+        let count = 4
+        let attempted = DispatchSemaphore(value: 0)
+        let state = BackgroundOverlap()
+        let statuses = await withTaskGroup(of: OSStatus.self) { group in
+            for _ in 0..<count {
+                group.addTask {
+                    await securityOperation(interactive: false, before: { attempted.signal() }) {
+                        state.enter()
+                        defer { state.leave() }
+                        if state.claimFirst() {
+                            // Hold the switch until every call has reached perform.
+                            for _ in 0..<count { #expect(attempted.wait(timeout: .now() + 5) == .success) }
+                            Thread.sleep(forTimeInterval: 0.05)
+                        }
+                        return errSecSuccess
+                    }
+                }
+            }
+            return await group.reduce(into: [OSStatus]()) { $0.append($1) }
+        }
+        #expect(statuses == Array(repeating: errSecSuccess, count: count))
+        #expect(state.maximumActive == 1)
+    }
+
     @Test(arguments: [AccountProvider.codex, .claude, .antigravity], [false, true])
     func everyProviderRejectsCorruptOrOversizedItems(_ provider: AccountProvider, _ oversized: Bool) async throws {
         let security = OAuthFakeSecurity()
@@ -240,6 +266,24 @@ import Testing
         security.status = errSecSuccess
         security.corrupt = true
         await #expect(throws: AntigravityOAuthError.invalidResponse) { try await store.load(profileID: id) }
+    }
+}
+
+/// Records how many Security operations ran at once and which one entered first.
+private final class BackgroundOverlap: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = 0
+    private var maximum = 0
+    private var claimed = false
+
+    var maximumActive: Int { lock.withLock { maximum } }
+    func enter() { lock.withLock { active += 1; maximum = max(maximum, active) } }
+    func leave() { lock.withLock { active -= 1 } }
+    func claimFirst() -> Bool {
+        lock.withLock {
+            defer { claimed = true }
+            return !claimed
+        }
     }
 }
 

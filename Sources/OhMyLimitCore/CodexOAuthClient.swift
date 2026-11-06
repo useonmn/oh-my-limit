@@ -137,7 +137,8 @@ public struct CodexOAuthClient: Sendable {
             try Task.checkCancellation()
             guard data.count <= 65_536 else { throw CodexOAuthError.invalidResponse }
             guard (200...299).contains(response.statusCode) else {
-                if response.statusCode == 400 { throw CodexOAuthError.signInRequired }
+                // auth.openai.com rejects spent or revoked refresh tokens with 400 or 401.
+                if response.statusCode == 400 || response.statusCode == 401 { throw CodexOAuthError.signInRequired }
                 throw CodexOAuthError.authorizationFailed(response.statusCode)
             }
             return data

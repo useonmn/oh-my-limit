@@ -42,8 +42,8 @@ open dist/OhMyLimit.app
 `dist/OhMyLimit.app`을 Applications 폴더로 복사해 사용할 수도 있습니다.
 `Oh My Limit Dev` 인증서가 있으면 그 인증서로, 없으면 ad-hoc으로 로컬 서명하며
 Developer ID 공증 배포본은 아닙니다.
-첫 정상 실행 때 사용자 LaunchAgent로 등록되며, 다음 macOS 로그인부터 자동 실행됩니다.
-자동 실행은 **시스템 설정 → 일반 → 로그인 항목 및 확장 프로그램**에서 끌 수 있습니다.
+첫 정상 실행 때 macOS 로그인 항목으로 등록되며, 다음 macOS 로그인부터 자동 실행됩니다.
+자동 실행은 앱 설정의 **로그인 시 실행** 또는 **시스템 설정 → 일반 → 로그인 항목 및 확장 프로그램**에서 끌 수 있습니다.
 
 ## 키체인 접근을 유지하는 서명 인증서 만들기
 
@@ -65,15 +65,17 @@ basicConstraints=critical,CA:false
 keyUsage=critical,digitalSignature
 extendedKeyUsage=critical,codeSigning
 EOF
-openssl req -x509 -newkey rsa:2048 -nodes -days 7300 -config "$T/c.cnf" \
+/usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 7300 -config "$T/c.cnf" \
   -keyout "$T/k.pem" -out "$T/c.pem"
-openssl pkcs12 -export -inkey "$T/k.pem" -in "$T/c.pem" -name "Oh My Limit Dev" \
+/usr/bin/openssl pkcs12 -export -inkey "$T/k.pem" -in "$T/c.pem" -name "Oh My Limit Dev" \
   -out "$T/i.p12" -passout "pass:$P"
 security import "$T/i.p12" -k ~/Library/Keychains/login.keychain-db -P "$P" -T /usr/bin/codesign
 rm -rf "$T"
 ```
 
 개인 키는 로그인 키체인에만 남고 임시 파일은 지워집니다. 저장소에 넣지 마세요.
+Homebrew 등 OpenSSL 3의 PKCS#12 기본 형식은 `security import`가 거부하므로
+macOS 기본 `/usr/bin/openssl`을 사용합니다.
 처음 서명할 때 `codesign`의 키 사용 허용 창이 뜨면 Mac 암호를 입력하고
 **항상 허용**을 누릅니다. `security find-identity -p codesigning`에 표시되는
 `CSSMERR_TP_NOT_TRUSTED`는 자체 서명 인증서에서 정상이며 서명에는 문제가 없습니다.
@@ -201,6 +203,8 @@ Antigravity IDE 클라이언트 계약을 사용하며 리다이렉트와 공유
 로컬 연결은 Connect-RPC 또는 공식 CLI JSON 출력을 사용합니다.
 로컬 통신의 자체 서명 인증서는 루프백 주소에서만 허용하고 리다이렉트는 거부합니다.
 웹 쿠키를 수집하거나 추론·프로젝트 생성 요청을 보내지 않습니다.
+세 서비스 모두 공식 CLI·앱과 같은 각 서비스의 공개 OAuth 클라이언트로 로그인하므로,
+서비스 측에서 언제든 이 접근 방식을 변경하거나 차단할 수 있습니다.
 
 앱 설정과 마지막 사용량은 다음 위치에 저장됩니다.
 
@@ -222,12 +226,12 @@ Antigravity 로컬 통신에 필요한 프로세스 CSRF 값만 메모리에서 
 
 ## 제거하기
 
-1. 메뉴바의 Oh My Limit을 종료합니다.
-2. `/Applications/OhMyLimit.app`을 삭제합니다.
-3. 계정 목록과 마지막 사용량 기록까지 지우려면 `~/Library/Application Support/OhMyLimit/` 폴더를 삭제합니다. (선택)
-4. 로그인 토큰까지 지우려면 키체인 접근 앱에서 서비스 이름이 `local.ohmylimit.codex.oauth`, `local.ohmylimit.claude.oauth`, `local.ohmylimit.antigravity.oauth`인 항목을 삭제합니다. (선택)
-
-앱을 지운 뒤에도 로그인 항목이 남아 있으면 **시스템 설정 → 일반 → 로그인 항목**에서 제거할 수 있습니다.
+1. 앱 설정에서 **로그인 시 실행**을 끄거나 **시스템 설정 → 일반 → 로그인 항목 및 확장 프로그램**에서 Oh My Limit을 제거합니다.
+2. 메뉴바의 Oh My Limit을 종료합니다.
+3. `/Applications/OhMyLimit.app`을 삭제합니다.
+4. 계정 목록과 마지막 사용량 기록까지 지우려면 `~/Library/Application Support/OhMyLimit/` 폴더를 삭제합니다. (선택)
+5. 로그인 토큰까지 지우려면 키체인 접근 앱에서 서비스 이름이 `local.ohmylimit.codex.oauth`, `local.ohmylimit.claude.oauth`, `local.ohmylimit.antigravity.oauth`인 항목을 삭제합니다. (선택)
+6. 앱 환경설정을 초기화하려면 `defaults delete local.ohmylimit.app`을 실행합니다. (선택)
 
 ## 개발과 검증
 
@@ -284,3 +288,7 @@ bash scripts/capture-previews.sh
 ## 라이선스
 
 [MIT](LICENSE). 서비스 로고의 출처와 라이선스는 `Resources/ThirdPartyNotices.md`에 있습니다.
+
+OpenAI·ChatGPT·Codex, Anthropic·Claude, Google·Antigravity의 이름과 로고는 각 소유자의
+상표입니다. 이 프로젝트는 비공식 프로젝트이며 이들 회사와 제휴하거나 보증을 받지 않았습니다.
+로고는 연결된 서비스를 식별하는 용도로만 사용합니다.

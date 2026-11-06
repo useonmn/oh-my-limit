@@ -1,3 +1,11 @@
+# Trademarks
+
+OpenAI, ChatGPT, and Codex are trademarks of OpenAI. Anthropic and Claude are
+trademarks of Anthropic. Google and Antigravity are trademarks of Google LLC.
+These names and logos belong to their respective owners. Oh My Limit is an
+unofficial project and is not affiliated with, sponsored by, or endorsed by
+any of them. The logos are used only to identify the connected service.
+
 # Provider icons
 
 OpenAI, Claude, and Antigravity vector marks are from LobeHub Icons:

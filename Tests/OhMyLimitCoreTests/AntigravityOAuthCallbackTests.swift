@@ -84,7 +84,13 @@ import Testing
         #expect(parse("/callback?state=expected&code=c", extra: "Content-Length: 1\r\n") == .ignored)
         #expect(parse("/callback?state=expected&code=c", extra: "Transfer-Encoding: chunked\r\n") == .ignored)
         #expect(AntigravityOAuthCallback.parse(Data("GET /callback?state=expected".utf8), state: state) == .incomplete)
-        #expect(AntigravityOAuthCallback.parse(Data(repeating: 65, count: 16_385), state: state) == .ignored)
+        let oversize = AntigravityOAuthCallback.maxRequestBytes + 1
+        #expect(AntigravityOAuthCallback.parse(Data(repeating: 65, count: oversize), state: state) == .ignored)
+        let cookie = "Cookie: big=\(String(repeating: "x", count: oversize))\r\n"
+        #expect(parse("/callback?state=expected&code=c", extra: cookie) == .tooLarge)
+        #expect(parse("/callback?state=foreign&code=c", extra: cookie) == .ignored)
+        #expect(parse("/favicon.ico", extra: cookie) == .ignored)
+        #expect(parse("/callback?state=expected&code=c", method: "POST", extra: cookie) == .ignored)
     }
 
     @Test func fragmentedCallbackSurvivesForeignRequestsAndReturnsConstantHTML() async throws {
@@ -131,6 +137,31 @@ import Testing
         let expired = try AntigravityOAuthCallback(state: "s", timeout: 0)
         await #expect(throws: AntigravityOAuthError.timedOut) { try await expired.wait { _ in } }
         #expect(await expired.isClosed())
+    }
+
+    @Test func callbackAcceptsLargeLocalhostCookiesAndFailsFastBeyondCap() async throws {
+        let accepted = try AntigravityOAuthCallback(state: "s", timeout: 30, redirectHost: "localhost")
+        let (ready, signal) = AsyncStream<URL>.makeStream()
+        let login = Task { defer { signal.finish() }; return try await accepted.wait { signal.yield($0) } }
+        defer { login.cancel() }
+        var iterator = ready.makeAsyncIterator()
+        let url = try #require(await iterator.next())
+        let cookie = "Cookie: dev=\(String(repeating: "c", count: 30_000))\r\n"
+        let response = try await oauthRawRequest(url, fragments: ["GET /callback?state=s&code=fixture-code HTTP/1.1\r\nHost: localhost\r\n", cookie, "\r\n"])
+        #expect(response.contains("200 OK"))
+        #expect(try await login.value == "fixture-code")
+
+        let rejected = try AntigravityOAuthCallback(state: "s", timeout: 30, redirectHost: "localhost")
+        let (rejectReady, rejectSignal) = AsyncStream<URL>.makeStream()
+        let rejectLogin = Task { defer { rejectSignal.finish() }; return try await rejected.wait { rejectSignal.yield($0) } }
+        defer { rejectLogin.cancel() }
+        var rejectIterator = rejectReady.makeAsyncIterator()
+        let rejectURL = try #require(await rejectIterator.next())
+        let huge = "Cookie: dev=\(String(repeating: "c", count: AntigravityOAuthCallback.maxRequestBytes))\r\n"
+        // The server answers and closes mid-upload, so the peer may see a reset instead of the page.
+        _ = try? await oauthRawRequest(rejectURL, fragments: ["GET /callback?state=s&code=fixture-code HTTP/1.1\r\nHost: localhost\r\n", huge, "\r\n"])
+        await #expect(throws: AntigravityOAuthError.invalidResponse) { try await rejectLogin.value }
+        #expect(await rejected.isClosed())
     }
 
     @Test func loginUsesReadyListenerAndOfflinePKCEAuthorization() async throws {

@@ -37,8 +37,6 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem = item
         item.button?.image = NSImage(systemSymbolName: "gauge.with.dots.needle.33percent", accessibilityDescription: nil)
-        item.button?.imagePosition = .imageLeading
-        item.button?.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         item.button?.target = self
         item.button?.action = #selector(togglePopover)
         item.button?.setAccessibilityLabel("Oh My Limit 사용량")
@@ -315,6 +313,7 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     private func settingsView(for monitor: UsageMonitor) -> SettingsView {
         SettingsView(
             monitor: monitor,
+            launchAtLogin: launchAtLogin,
             loginAntigravity: { [weak self] in
                 guard let self, let id = self.monitor?.createAntigravityAccount() else { return }
                 self.login(id)
