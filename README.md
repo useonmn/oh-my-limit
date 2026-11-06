@@ -3,10 +3,9 @@
 Codex, Claude, Antigravity 구독 사용량을 보여주는 네이티브 macOS 메뉴바 앱입니다.
 SwiftUI와 AppKit을 사용하며 외부 패키지 의존성은 없습니다.
 
-## 새 Mac에서 복원
+## 설치
 
-이 저장소에는 앱을 다시 빌드하는 데 필요한 소스, 리소스, 테스트와 스크립트가
-포함됩니다. 새 Mac에서는 다음 순서로 복원합니다.
+소스에서 빌드해 설치합니다.
 
 ```sh
 xcode-select --install
@@ -19,9 +18,9 @@ open /Applications/OhMyLimit.app
 ```
 
 `xcode-select --install`은 이미 Command Line Tools가 설치되어 있으면 생략합니다.
-Git에는 개인 계정 정보나 인증 토큰을 저장하지 않습니다. 따라서 새 Mac에서는
-앱을 처음 열고 Codex, Claude, Antigravity 계정을 브라우저 로그인으로 다시 연결해야 합니다.
-기존 Mac의 키체인과 `~/Library/Application Support/OhMyLimit/`는 저장소에 포함되지 않습니다.
+저장소에는 계정 정보나 인증 토큰이 없습니다. 앱을 처음 열고 Codex, Claude,
+Antigravity 계정을 브라우저 로그인으로 연결합니다. 로그인 정보는 키체인과
+`~/Library/Application Support/OhMyLimit/`에만 저장됩니다.
 
 ## 실행
 
@@ -261,27 +260,19 @@ bash scripts/capture-previews.sh
 ```
 
 사용량·오류·로그인 상태, 상세 화면의 스크롤 끝과 설정의 빈 계정/연결된 계정 상태를
-라이트/다크 시스템 환경에서 렌더링해 `.omo/evidence/`에 저장합니다.
+라이트/다크 시스템 환경에서 렌더링해 `dist/previews/`에 저장합니다.
 설정 미리보기 계정은 임시 폴더에만 만들며 실제 계정 목록에 저장되지 않습니다.
 기본 실행은 항상 실제 계정 데이터를 사용합니다.
 
-### 환경에서 확인한 제한
+### 개발 참고
 
-- Swift 6.4 Command Line Tools에서는 SwiftUI의 새 `@State` 매크로 플러그인이
-  빠져 있어, 설정 입력은 호환되는 `ObservableObject`/`StateObject`로 관리합니다.
-- 이 환경의 기본 Swift 빌더가 존재하지 않는 Command Line Tools 링크 검색 경로
-  경고를 출력합니다. 빌드와 테스트는 통과하며 경고를 숨기지 않습니다.
-- `--build-system native`는 이 환경에서 `Testing` 모듈을 찾지 못하므로 기본
-  빌더를 사용합니다.
-- 기본 빌더도 증분 빌드 상태에 따라 `TestingMacros` 플러그인을 누락할 수
-  있습니다. `scripts/test.sh`는 선택된 Swift 도구 체인의 플러그인이 있으면
+- Swift 6.4 Command Line Tools에는 SwiftUI의 새 `@State` 매크로 플러그인이
+  없어서, 설정 입력은 `ObservableObject`/`StateObject`로 관리합니다.
+- 기본 빌더는 증분 빌드 상태에 따라 `TestingMacros` 플러그인을 빠뜨릴 수
+  있습니다. `scripts/test.sh`는 선택된 Swift 도구 체인에 플러그인이 있으면
   그 경로를 명시해 테스트를 실행합니다.
-- 브라우저에서 실제 두 번째 계정의 인증을 완료하는 단계는 사용자가 수행해야
-  합니다. 로컬 테스트는 그 인증 정보를 요구하지 않습니다.
-- Google 직접 로그인과 실제 구독 한도 제공 여부도 사용자가 선택한 계정으로
-  확인해야 합니다. 테스트 통과만으로 실계정 권한을 보장하지 않습니다.
-- SourceKit의 단일 파일 진단은 이 환경에서 로컬 Swift 모듈/Testing을 찾지
-  못하는 경우가 있습니다. 실제 컴파일과 테스트 결과로 별도 확인합니다.
+- 테스트 통과는 실제 계정의 권한이나 구독 한도 제공 여부를 보장하지 않습니다.
+  실제 로그인과 조회는 각자 계정으로 확인해야 합니다.
 
 ## 구성
 
@@ -289,3 +280,7 @@ bash scripts/capture-previews.sh
 - `Sources/OhMyLimit`: 메뉴바, 팝오버, 설정, 화면 미리보기
 - `Tests/OhMyLimitCoreTests`: 프로토콜과 계정/상태 회귀 테스트
 - `DESIGN.md`: 화면과 접근성 기준
+
+## 라이선스
+
+[MIT](LICENSE). 서비스 로고의 출처와 라이선스는 `Resources/ThirdPartyNotices.md`에 있습니다.

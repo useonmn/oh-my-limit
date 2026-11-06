@@ -9,8 +9,8 @@ let package = Package(
         .library(name: "OhMyLimitCore", targets: ["OhMyLimitCore"]),
     ],
     targets: [
-        .target(name: "OhMyLimitCore", exclude: ["AGENTS.md"]),
+        .target(name: "OhMyLimitCore"),
         .executableTarget(name: "OhMyLimit", dependencies: ["OhMyLimitCore"]),
-        .testTarget(name: "OhMyLimitCoreTests", dependencies: ["OhMyLimitCore"], exclude: ["AGENTS.md"]),
+        .testTarget(name: "OhMyLimitCoreTests", dependencies: ["OhMyLimitCore"]),
     ]
 )

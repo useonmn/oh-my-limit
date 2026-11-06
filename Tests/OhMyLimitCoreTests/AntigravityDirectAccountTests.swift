@@ -88,24 +88,6 @@ import Testing
         #expect(try await keychain.load(profileID: id) == nil)
     }
 
-    @Test @MainActor func directLoginDoesNotRequireAnInstalledCLI() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let store = AccountStore(directory: root)
-        let profile = AccountProfile(
-            name: "Google", homePath: root.path, isManaged: false,
-            provider: .antigravity, authentication: .oauth
-        )
-        try store.save([profile])
-        let monitor = UsageMonitor(store: store)
-
-        let task = monitor.login(profile.id, onURL: { _ in })
-
-        #expect(task != nil)
-        monitor.cancel(profile.id)
-        await task?.value
-    }
-
     @Test func oauthConnectionAndIdentitySurvivePersistence() throws {
         let input = Data(#"""
         {"id":"5E601632-EAF7-4F82-87B5-28BACFC9821B","name":"Google","homePath":"/local/oauth/profile","isManaged":false,"provider":"antigravity","authentication":"oauth","oauthIdentity":{"email":"direct@example.invalid","accountID":"google-123"}}

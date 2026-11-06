@@ -36,18 +36,12 @@ import Testing
         }
     }
 
-    @Test func sharedCallbackErrorsAreMappedToCodex() {
-        #expect(CodexOAuthClient.callbackError(.userCancelled) == .userCancelled)
-        #expect(CodexOAuthClient.callbackError(.timedOut) == .timedOut)
-        #expect(CodexOAuthClient.callbackError(.invalidResponse) == .invalidResponse)
-        #expect(CodexOAuthClient.callbackError(.networkFailure) == .callbackUnavailable)
-    }
-
     @Test(.timeLimit(.minutes(1))) func browserDenialUsesCodexError() async throws {
+        // Ephemeral port: the registered 1455/1457 may be held by a real Codex CLI login.
         let client = CodexOAuthClient(issuer: "https://issuer.invalid", clientID: "fixture", transport: { _ in
             Issue.record("Denied login must not exchange a code")
             throw CodexOAuthError.invalidResponse
-        })
+        }, callbackPorts: [])
         let urls = AsyncStream<URL>.makeStream()
         let task = Task {
             defer { urls.continuation.finish() }

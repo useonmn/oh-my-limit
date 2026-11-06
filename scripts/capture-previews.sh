@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-OUTPUT="${1:-"$ROOT/.omo/evidence"}"
+OUTPUT="${1:-"$ROOT/dist/previews"}"
 mkdir -p "$OUTPUT"
 xcrun swift build
 BIN="$(xcrun swift build --show-bin-path)"

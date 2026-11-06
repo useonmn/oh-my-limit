@@ -8,16 +8,20 @@ public struct CodexOAuthClient: Sendable {
     private let issuer: String
     private let clientID: String
     private let transport: Transport
+    private let callbackPorts: [UInt16]
 
     public init(issuer: String = CodexOAuthConfiguration.issuer,
                 clientID: String = CodexOAuthConfiguration.clientID) {
         self.init(issuer: issuer, clientID: clientID, transport: CodexOAuthHTTPS.send)
     }
 
-    init(issuer: String, clientID: String, transport: @escaping Transport) {
+    /// `callbackPorts` empty binds an ephemeral port; only tests use that.
+    init(issuer: String, clientID: String, transport: @escaping Transport,
+         callbackPorts: [UInt16] = CodexOAuthConfiguration.callbackPorts) {
         self.issuer = issuer
         self.clientID = clientID
         self.transport = transport
+        self.callbackPorts = callbackPorts
     }
 
     /// Runs the browser login: opens the authorize URL via `onURL`, waits for
@@ -35,7 +39,7 @@ public struct CodexOAuthClient: Sendable {
         let code: String
         do {
             callback = try AntigravityOAuthCallback(
-                state: state, ports: CodexOAuthConfiguration.callbackPorts,
+                state: state, ports: callbackPorts,
                 path: CodexOAuthConfiguration.callbackPath, redirectHost: "localhost"
             )
             code = try await callback.wait { redirect in

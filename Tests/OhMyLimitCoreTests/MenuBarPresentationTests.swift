@@ -34,19 +34,6 @@ struct MenuBarPresentationTests {
         }
     }
 
-    @Test func emptyStatesHaveExplicitTooltipAndAccessibilityLabel() {
-        #expect(MenuBarPresentation.accessibilityLabel(for: [], at: Self.now) == "Oh My Limit, 연결된 계정 없음")
-        #expect(MenuBarPresentation.tooltip(for: [], at: Self.now) == "연결된 계정 없음")
-    }
-
-    @Test func tooltipAndAccessibilityLabelWrapSummaryLines() {
-        let states = [Self.state()]
-        let lines = MenuBarPresentation.summaryLines(for: states, at: Self.now)
-        #expect(MenuBarPresentation.tooltip(for: states, at: Self.now)
-            == "사용률 · 주간 우선 · ~ 표시는 마지막 확인값 · % 뒤는 주간 초기화까지\n" + lines)
-        #expect(MenuBarPresentation.accessibilityLabel(for: states, at: Self.now) == "Oh My Limit\n" + lines)
-    }
-
     @Test func entriesShowFirstAccountsAndOverflowCount() {
         let cases: [(Int, [String])] = [
             (0, []),

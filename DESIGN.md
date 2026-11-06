@@ -11,12 +11,10 @@
   do not describe this surface; native rendering and keyboard checks replace them.
 - The evidence harness must render the actual SwiftUI views, not substitute an
   image for the interface. Preview data is visibly labeled and never persisted.
-- Approved 2026-09-15 reference: `Tracer_mu2lexqv.png` supplied by the user.
-  Adopt its dark rounded surface, provider marks inside circular usage rings,
-  large percentages, mint accent, and separate selected-account detail area.
-  This is a native adaptation, not a pixel clone of the five-provider image:
-  show connected accounts only, distinguish the two Codex accounts by name,
-  and preserve all real quota windows and account actions.
+- Visual direction: dark rounded surface, provider marks inside circular usage
+  rings, large percentages, mint accent, and a separate selected-account detail
+  area. Show connected accounts only, distinguish multiple accounts of the same
+  provider by name, and preserve all real quota windows and account actions.
 
 ## 1. Atmosphere & Identity
 

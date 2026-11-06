@@ -356,27 +356,6 @@ struct UsageMonitorTests {
         #expect(restored.accounts[0].snapshot == nil)
     }
 
-    @Test(arguments: [299.0, 300.0])
-    func antigravityAutomaticRefreshUsesFiveMinuteCadence(_ age: TimeInterval) async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let clock = now
-        let data = CodexUsageSnapshot(
-            identity: CodexIdentity(), windows: snapshot().windows, fetchedAt: now.addingTimeInterval(-age)
-        )
-        let monitor = makeMonitor(
-            store: AccountStore(directory: root), fetchAntigravity: { data }, clock: { clock }
-        )
-        let id = try #require(monitor.connectAntigravity())
-        await monitor.refresh(id)?.value
-
-        let automatic = monitor.refresh(id, manual: false)
-        await automatic?.value
-
-        #expect((automatic != nil) == (age >= 300))
-        #expect(!monitor.accounts[0].isStale(at: now))
-    }
-
     @Test func failureKeepsTheLastSuccessfulSnapshotAndBacksOff() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

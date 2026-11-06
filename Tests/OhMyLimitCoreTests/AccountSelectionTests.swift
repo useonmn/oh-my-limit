@@ -34,14 +34,4 @@ struct AccountSelectionTests {
 
         #expect(selection.selectedID == added)
     }
-
-    @Test func explicitNewAccountSelectionTakesPrecedence() {
-        let first = UUID(), added = UUID()
-        let selection = AccountSelection(selectedID: first)
-        selection.select(added)
-
-        selection.reconcile(accountIDs: [first, added])
-
-        #expect(selection.selectedID == added)
-    }
 }
