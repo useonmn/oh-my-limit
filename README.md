@@ -5,7 +5,18 @@ SwiftUI와 AppKit을 사용하며 외부 패키지 의존성은 없습니다.
 
 ## 설치
 
-소스에서 빌드해 설치합니다.
+터미널에서 한 줄로 최신 릴리스를 `/Applications`에 설치합니다. Apple Silicon, macOS 14 이상용입니다.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/useonmn/oh-my-limit/main/scripts/install.sh | bash
+```
+
+같은 명령을 다시 실행하면 최신 버전으로 업데이트됩니다. 실행 중인 앱은 자동으로 종료한 뒤
+교체하고 다시 엽니다. DMG가 필요하면 [Releases](https://github.com/useonmn/oh-my-limit/releases)에서
+받을 수 있습니다.
+
+### 소스에서 빌드
+
 
 ```sh
 xcode-select --install
@@ -21,6 +32,10 @@ open /Applications/OhMyLimit.app
 저장소에는 계정 정보나 인증 토큰이 없습니다. 앱을 처음 열고 Codex, Claude,
 Antigravity 계정을 브라우저 로그인으로 연결합니다. 로그인 정보는 키체인과
 `~/Library/Application Support/OhMyLimit/`에만 저장됩니다.
+
+릴리스를 올리려면 `gh` 로그인 상태에서 `./scripts/release.sh`를 실행합니다.
+`Resources/Info.plist`의 버전으로 `v<버전>` 릴리스를 만들고, 설치 스크립트가 받는
+`OhMyLimit-macOS-arm64.zip`과 DMG를 올립니다.
 
 ## 실행
 
