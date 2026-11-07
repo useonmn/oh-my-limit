@@ -5,7 +5,7 @@
 set -euo pipefail
 
 URL="${OHMYLIMIT_ZIP_URL:-https://github.com/useonmn/oh-my-limit/releases/latest/download/OhMyLimit-macOS-arm64.zip}"
-DEST="/Applications/OhMyLimit.app"
+DEST="${OHMYLIMIT_APP:-/Applications/OhMyLimit.app}"
 BUNDLE_ID="local.ohmylimit.app"
 
 fail() { printf 'Oh My Limit 설치 실패: %s\n' "$1" >&2; exit 1; }
@@ -39,4 +39,17 @@ rm -rf "$DEST" || fail "$DEST 를 교체할 권한이 없습니다."
 /usr/bin/xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
 
 printf '설치했습니다: %s\n' "$DEST"
+
+# The release carries its own oml; older releases do not. Replace via rename so a running
+# `oml update` keeps reading its old file.
+if [[ -f "$DEST/Contents/Resources/oml" ]]; then
+    BIN_DIR="$HOME/.local/bin"
+    mkdir -p "$BIN_DIR"
+    /usr/bin/install -m 755 "$DEST/Contents/Resources/oml" "$BIN_DIR/.oml.new"
+    mv -f "$BIN_DIR/.oml.new" "$BIN_DIR/oml"
+    case ":$PATH:" in
+        *":$BIN_DIR:"*) printf '업데이트와 제거는 oml update / oml uninstall 로 할 수 있습니다.\n' ;;
+        *) printf 'oml 명령을 쓰려면 다음을 실행하세요: echo '\''export PATH="$HOME/.local/bin:$PATH"'\'' >> ~/.zshrc\n' ;;
+    esac
+fi
 open "$DEST"

@@ -1,0 +1,85 @@
+#!/bin/bash
+# oml: update, inspect, or remove Oh My Limit. Installed to ~/.local/bin by install.sh.
+set -euo pipefail
+
+REPO="useonmn/oh-my-limit"
+APP="${OHMYLIMIT_APP:-/Applications/OhMyLimit.app}"
+BUNDLE_ID="local.ohmylimit.app"
+INSTALL_URL="${OHMYLIMIT_INSTALL_URL:-https://raw.githubusercontent.com/$REPO/main/scripts/install.sh}"
+
+usage() {
+    cat <<'EOF'
+사용법: oml <명령>
+
+  update [--force]   최신 버전이 있으면 받아서 교체하고 다시 엽니다
+  version            설치된 버전과 최신 버전을 보여 줍니다
+  uninstall [--yes]  앱, 계정 데이터, 키체인 로그인 정보, 설정, oml을 모두 지웁니다
+EOF
+}
+
+installed_version() {
+    /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || true
+}
+
+latest_version() {
+    local url
+    url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest")" || return 1
+    [[ "$url" == */tag/v* ]] || return 1
+    printf '%s\n' "${url##*/tag/v}"
+}
+
+cmd_version() {
+    local installed latest
+    installed="$(installed_version)"
+    latest="$(latest_version || true)"
+    printf '설치됨: %s\n최신:   %s\n' "${installed:-없음}" "${latest:-확인 실패}"
+}
+
+cmd_update() {
+    local installed latest
+    installed="$(installed_version)"
+    if [[ "${1:-}" != "--force" ]]; then
+        latest="$(latest_version)" || { printf '최신 버전을 확인하지 못했습니다.\n' >&2; exit 1; }
+        if [[ -n "$installed" && "$(printf '%s\n%s\n' "$installed" "$latest" | sort -V | tail -1)" == "$installed" ]]; then
+            printf '이미 최신 버전입니다 (%s).\n' "$installed"
+            return 0
+        fi
+        printf '%s → %s 로 업데이트합니다.\n' "${installed:-없음}" "$latest"
+    fi
+    # exec: the installer may replace this very script; nothing here runs afterwards.
+    exec /bin/bash -c "set -o pipefail; curl -fsSL '$INSTALL_URL' | /bin/bash"
+}
+
+cmd_uninstall() {
+    if [[ "${1:-}" != "--yes" ]]; then
+        printf 'Oh My Limit과 계정 데이터, 키체인 로그인 정보, 설정을 모두 지웁니다. 계속할까요? [y/N] '
+        local answer=""
+        read -r answer </dev/tty || true
+        [[ "$answer" == [yY]* ]] || { printf '취소했습니다.\n'; return 0; }
+    fi
+    osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+    for _ in $(seq 1 20); do
+        pgrep -f "$APP/Contents/MacOS/OhMyLimit" >/dev/null || break
+        sleep 0.5
+    done
+    rm -rf "$APP" \
+        "$HOME/Library/Application Support/OhMyLimit" \
+        "$HOME/Library/Caches/$BUNDLE_ID" \
+        "$HOME/Library/HTTPStorages/$BUNDLE_ID" \
+        "$HOME/Library/Saved Application State/$BUNDLE_ID.savedState" \
+        "$HOME/Library/LaunchAgents/$BUNDLE_ID.login.plist"
+    for service in local.ohmylimit.codex.oauth local.ohmylimit.claude.oauth local.ohmylimit.antigravity.oauth; do
+        while security delete-generic-password -s "$service" >/dev/null 2>&1; do :; done
+    done
+    defaults delete "$BUNDLE_ID" >/dev/null 2>&1 || true
+    printf 'Oh My Limit을 지웠습니다.\n'
+    rm -f "$0"
+}
+
+case "${1:-}" in
+    update) shift; cmd_update "$@" ;;
+    version|--version|-v) cmd_version ;;
+    uninstall) shift; cmd_uninstall "$@" ;;
+    help|--help|-h|"") usage ;;
+    *) printf '알 수 없는 명령: %s\n\n' "$1" >&2; usage >&2; exit 1 ;;
+esac

@@ -17,8 +17,16 @@ Apple Silicon Mac, macOS 14 이상이 필요합니다. 터미널에서 한 줄�
 curl -fsSL https://raw.githubusercontent.com/useonmn/oh-my-limit/main/scripts/install.sh | bash
 ```
 
-같은 명령을 다시 실행하면 최신 버전으로 업데이트됩니다. 실행 중인 앱은 자동으로
-종료한 뒤 교체하고 다시 엽니다.
+설치하면 `oml` 명령도 `~/.local/bin`에 함께 설치됩니다.
+
+```sh
+oml update      # 새 버전이 있으면 받아서 교체하고 앱을 다시 엽니다
+oml version     # 설치된 버전과 최신 버전
+oml uninstall   # 앱, 계정 데이터, 키체인 로그인 정보, 설정, oml을 모두 지웁니다 (확인 후)
+```
+
+`oml`을 찾을 수 없다고 나오면 `~/.local/bin`이 PATH에 없는 것입니다. 설치 스크립트가
+안내하는 한 줄을 실행하거나, 위의 `curl` 설치 명령을 다시 실행해도 업데이트됩니다.
 
 터미널을 쓰지 않는다면 [Releases](https://github.com/useonmn/oh-my-limit/releases)에서
 `OhMyLimit-macOS-arm64.zip`을 받아 압축을 풀고 `OhMyLimit.app`을 `Applications`로 옮깁니다.
@@ -151,6 +159,8 @@ curl -fsSL https://raw.githubusercontent.com/useonmn/oh-my-limit/main/scripts/in
   빠지고 안내가 표시됩니다. CLI의 로그인 파일은 건드리지 않으니 브라우저 로그인으로 다시 연결하면 됩니다.
 
 ## 제거하기
+
+`oml uninstall`을 실행하면 아래 항목을 한 번에 지웁니다. 직접 지우려면:
 
 1. 앱 설정에서 **로그인 시 실행**을 끄거나 **시스템 설정 → 일반 → 로그인 항목 및 확장 프로그램**에서 Oh My Limit을 제거합니다.
 2. 메뉴바의 Oh My Limit을 종료하고 `/Applications/OhMyLimit.app`을 삭제합니다.
