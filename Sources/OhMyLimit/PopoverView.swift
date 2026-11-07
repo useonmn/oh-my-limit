@@ -75,7 +75,7 @@ struct AccountCard: View {
                     QuotaRow(window: window, now: now)
                 }
                 if state.hiddenWindowCount > 0 {
-                    Text("모델 \(state.hiddenWindowCount)개 숨김")
+                    Text("한도 \(state.hiddenWindowCount)개 숨김")
                         .font(Theme.panelCaption).foregroundStyle(Theme.panelSecondary)
                 }
                 if snapshot.windows.isEmpty {

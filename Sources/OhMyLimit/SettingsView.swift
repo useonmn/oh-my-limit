@@ -287,11 +287,11 @@ private struct AccountSettingsRow: View {
                 .padding(.top, Theme.panelSmall)
             } label: {
                 Text(state.hiddenWindowCount == 0
-                     ? "표시할 모델 · 전체"
-                     : "표시할 모델 · \(visible.count)/\(windows.count)개")
+                     ? "표시할 한도 · 전체"
+                     : "표시할 한도 · \(visible.count)/\(windows.count)개")
                     .font(Theme.caption)
             }
-            .accessibilityLabel("\(state.profile.name) 표시할 모델")
+            .accessibilityLabel("\(state.profile.name) 표시할 한도")
         }
     }
 
