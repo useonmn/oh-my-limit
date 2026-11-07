@@ -20,10 +20,10 @@ curl -fsSL https://raw.githubusercontent.com/useonmn/oh-my-limit/main/scripts/in
 같은 명령을 다시 실행하면 최신 버전으로 업데이트됩니다. 실행 중인 앱은 자동으로
 종료한 뒤 교체하고 다시 엽니다.
 
-DMG로 설치하려면 [Releases](https://github.com/useonmn/oh-my-limit/releases)에서 받아
-앱을 `Applications`로 드래그합니다. 이 앱은 Apple 공증을 받지 않았으므로 브라우저로
-받은 DMG는 첫 실행이 차단될 수 있습니다. 그때는 **시스템 설정 → 개인정보 보호 및 보안 →
-그래도 열기**로 허용합니다.
+터미널을 쓰지 않는다면 [Releases](https://github.com/useonmn/oh-my-limit/releases)에서
+`OhMyLimit-macOS-arm64.zip`을 받아 압축을 풀고 `OhMyLimit.app`을 `Applications`로 옮깁니다.
+이 앱은 Apple 공증을 받지 않았으므로 브라우저로 받은 앱은 첫 실행이 차단될 수 있습니다.
+그때는 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**로 허용합니다.
 
 ## 처음 실행
 
@@ -186,15 +186,14 @@ CLI 버전 검사, 출력 제한, 취소와 정리를 검증합니다. OAuth 테
 허용을 묻습니다. Team ID 없이는 최신 데이터 보호 키체인도 쓸 수 없습니다(`errSecMissingEntitlement`).
 업데이트 뒤에도 묻지 않게 하려면 Apple Developer Program의 Developer ID로 서명해야 합니다.
 
-### DMG와 릴리스
+### 릴리스
 
 ```sh
-./scripts/build-dmg.sh   # dist/OhMyLimit-<버전>-macOS-arm64.dmg
 ./scripts/release.sh     # GitHub 릴리스 v<버전> 생성 또는 갱신
 ```
 
-`release.sh`는 `gh` 로그인 상태에서 `Resources/Info.plist`의 버전으로 릴리스를 만들고, 설치
-스크립트가 받는 `OhMyLimit-macOS-arm64.zip`과 DMG를 올립니다.
+`release.sh`는 `gh` 로그인 상태에서 앱을 빌드하고 `Resources/Info.plist`의 버전으로 릴리스를
+만들어, 설치 스크립트가 받는 `OhMyLimit-macOS-arm64.zip`을 올립니다.
 
 ### 확인용 도구
 
@@ -225,7 +224,7 @@ bash scripts/capture-previews.sh
 - `Sources/OhMyLimitCore`: OAuth 로그인, 사용량 조회, 계정 저장, 조회 상태와 캐시
 - `Sources/OhMyLimit`: 메뉴바, 팝오버, 설정, 화면 미리보기
 - `Tests/OhMyLimitCoreTests`: 프로토콜과 계정·상태 회귀 테스트
-- `scripts/`: 테스트, 빌드, DMG, 릴리스, 설치 스크립트
+- `scripts/`: 테스트, 빌드, 릴리스, 설치 스크립트
 - `DESIGN.md`: 화면과 접근성 기준
 
 ## 라이선스
