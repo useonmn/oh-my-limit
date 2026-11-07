@@ -24,19 +24,36 @@ public struct AccountState: Identifiable, Sendable {
         return error != nil || age < 0 || age > threshold
     }
 
+    /// Snapshot windows the user chose to show, in server order. Falls back to every window when
+    /// nothing is selected or none of the selected ids exists anymore (the server renamed models).
+    public var visibleWindows: [CodexQuotaWindow] {
+        let windows = snapshot?.windows ?? []
+        guard let selected = profile.visibleWindowIDs.map(Set.init) else { return windows }
+        let visible = windows.filter { selected.contains($0.id) }
+        return visible.isEmpty ? windows : visible
+    }
+
+    /// Number of snapshot windows hidden by the current selection.
+    public var hiddenWindowCount: Int {
+        (snapshot?.windows.count ?? 0) - visibleWindows.count
+    }
+
     public var menuWindow: CodexQuotaWindow? {
-        let known = snapshot?.windows.filter(\.usageKnown) ?? []
+        let known = visibleWindows.filter(\.usageKnown)
         let weekly = known.filter(\.isWeekly)
+        let preferred: CodexQuotaWindow?
         switch profile.provider {
         case .codex:
             let main = known.filter { $0.id.hasPrefix("codex.") }
-            return main.first(where: \.isWeekly) ?? main.first
+            preferred = main.first(where: \.isWeekly) ?? main.first
         case .antigravity:
-            return (weekly.isEmpty ? known : weekly).max { $0.usedPercent < $1.usedPercent }
+            preferred = (weekly.isEmpty ? known : weekly).max { $0.usedPercent < $1.usedPercent }
         case .claude:
-            return known.first(where: { $0.id == "claude.weekly" })
+            preferred = known.first(where: { $0.id == "claude.weekly" })
                 ?? known.first(where: { $0.id == "claude.session" })
         }
+        // A selection that hides every window the rules prefer still shows a chosen one.
+        return preferred ?? (hiddenWindowCount > 0 ? known.first : nil)
     }
 }
 
@@ -269,6 +286,26 @@ public final class UsageMonitor: ObservableObject {
         do {
             try store.save(profiles)
             update(id) { $0.profile.name = trimmed }
+            return true
+        } catch {
+            notice = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Chooses which quota windows an account shows. nil, an empty set, or every window of the
+    /// latest snapshot shows all windows and is stored as nil.
+    @discardableResult
+    public func setVisibleWindows(_ id: UUID, _ ids: Set<String>?) -> Bool {
+        guard let index = accounts.firstIndex(where: { $0.id == id }) else { return false }
+        let all = Set(accounts[index].snapshot?.windows.map(\.id) ?? [])
+        let selection = ids.flatMap { $0.isEmpty || $0 == all ? nil : Array($0).sorted() }
+        guard accounts[index].profile.visibleWindowIDs != selection else { return true }
+        var profiles = accounts.map(\.profile)
+        profiles[index].visibleWindowIDs = selection
+        do {
+            try store.save(profiles)
+            update(id) { $0.profile.visibleWindowIDs = selection }
             return true
         } catch {
             notice = error.localizedDescription

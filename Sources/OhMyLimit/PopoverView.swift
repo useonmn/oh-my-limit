@@ -71,8 +71,12 @@ struct AccountCard: View {
                 Button("로그인 취소", action: cancel).buttonStyle(.borderless).controlSize(.small)
                     .foregroundStyle(Theme.link)
             } else if let snapshot = state.snapshot {
-                ForEach(snapshot.windows) { window in
+                ForEach(state.visibleWindows) { window in
                     QuotaRow(window: window, now: now)
+                }
+                if state.hiddenWindowCount > 0 {
+                    Text("모델 \(state.hiddenWindowCount)개 숨김")
+                        .font(Theme.panelCaption).foregroundStyle(Theme.panelSecondary)
                 }
                 if snapshot.windows.isEmpty {
                     Text("조회된 사용량 한도 정보가 없습니다.")

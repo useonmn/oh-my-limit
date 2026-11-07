@@ -28,10 +28,14 @@ public struct AccountProfile: Codable, Equatable, Identifiable, Sendable {
     public let provider: AccountProvider
     public let authentication: AccountAuthentication
     public var oauthIdentity: CodexIdentity?
+    /// Quota window ids to show; nil shows every window. Kept sorted and unique.
+    public var visibleWindowIDs: [String]? {
+        didSet { visibleWindowIDs = visibleWindowIDs.map { Array(Set($0)).sorted() } }
+    }
 
     public init(id: UUID = UUID(), name: String, homePath: String, isManaged: Bool,
                 provider: AccountProvider = .codex, authentication: AccountAuthentication = .local,
-                oauthIdentity: CodexIdentity? = nil) {
+                oauthIdentity: CodexIdentity? = nil, visibleWindowIDs: [String]? = nil) {
         self.id = id
         self.name = name
         self.homePath = homePath
@@ -39,10 +43,11 @@ public struct AccountProfile: Codable, Equatable, Identifiable, Sendable {
         self.provider = provider
         self.authentication = authentication
         self.oauthIdentity = oauthIdentity
+        self.visibleWindowIDs = visibleWindowIDs.map { Array(Set($0)).sorted() }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, homePath, isManaged, provider, authentication, oauthIdentity
+        case id, name, homePath, isManaged, provider, authentication, oauthIdentity, visibleWindowIDs
     }
 
     public init(from decoder: any Decoder) throws {
@@ -54,7 +59,8 @@ public struct AccountProfile: Codable, Equatable, Identifiable, Sendable {
             isManaged: try values.decode(Bool.self, forKey: .isManaged),
             provider: try values.decodeIfPresent(AccountProvider.self, forKey: .provider) ?? .codex,
             authentication: try values.decodeIfPresent(AccountAuthentication.self, forKey: .authentication) ?? .local,
-            oauthIdentity: try values.decodeIfPresent(CodexIdentity.self, forKey: .oauthIdentity)
+            oauthIdentity: try values.decodeIfPresent(CodexIdentity.self, forKey: .oauthIdentity),
+            visibleWindowIDs: try values.decodeIfPresent([String].self, forKey: .visibleWindowIDs)
         )
     }
 

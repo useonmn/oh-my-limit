@@ -53,6 +53,7 @@ extension ApplicationDelegate {
                 loginClaudeAccount: {},
                 renameAccount: { _, _ in }, refreshAccount: { _ in }, loginAccount: { _ in },
                 cancelLogin: { _ in }, authorizeKeychain: { _ in }, disconnectAccount: { _ in },
+                setVisibleWindows: { _, _ in },
                 initialProvider: scenario == "settings-claude" ? .claude : .codex
             ))
             let previewFlow = PopoverFlow()

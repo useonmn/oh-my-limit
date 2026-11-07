@@ -22,6 +22,7 @@ struct SettingsView: View {
     let cancelLogin: (UUID) -> Void
     let authorizeKeychain: (UUID) -> Void
     let disconnectAccount: (UUID) -> Void
+    let setVisibleWindows: (UUID, Set<String>?) -> Void
     var initialProvider: AccountProvider = .codex
     @StateObject private var draft = AccountDraft()
 
@@ -75,6 +76,7 @@ struct SettingsView: View {
                             onCancel: { cancelLogin(state.id) },
                             onAuthorizeKeychain: { authorizeKeychain(state.id) },
                             onDisconnect: { disconnectAccount(state.id) },
+                            onSetVisibleWindows: { setVisibleWindows(state.id, $0) },
                             onMoveLeft: monitor.accounts.first?.id == state.id ? nil : { move(state.id, offset: -1) },
                             onMoveRight: monitor.accounts.last?.id == state.id ? nil : { move(state.id, offset: 1) }
                         )
@@ -173,6 +175,7 @@ private struct AccountSettingsRow: View {
     let onCancel: () -> Void
     let onAuthorizeKeychain: () -> Void
     let onDisconnect: () -> Void
+    let onSetVisibleWindows: (Set<String>?) -> Void
     let onMoveLeft: (() -> Void)?
     let onMoveRight: (() -> Void)?
     @StateObject private var draft = AliasDraft()
@@ -237,6 +240,9 @@ private struct AccountSettingsRow: View {
                 }
             }
             .buttonStyle(.borderless)
+            if !draft.isEditing {
+                modelVisibility
+            }
             if let error = state.error {
                 WarningLabel(text: error)
             }
@@ -252,6 +258,46 @@ private struct AccountSettingsRow: View {
         }
         .onAppear { draft.name = state.profile.name }
         .onChange(of: state.profile.name) { draft.name = $1 }
+    }
+
+    /// Lets the user pick which quota windows (models) the popover and menu bar show. An inline
+    /// checklist, because a menu closes after each pick and accounts can expose many models.
+    @ViewBuilder
+    private var modelVisibility: some View {
+        if let windows = state.snapshot?.windows, windows.count > 1 {
+            let visible = Set(state.visibleWindows.map(\.id))
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: Theme.panelSmall) {
+                    ForEach(windows) { window in
+                        Toggle(windowTitle(window), isOn: Binding(
+                            get: { visible.contains(window.id) },
+                            set: { isOn in
+                                onSetVisibleWindows(isOn ? visible.union([window.id]) : visible.subtracting([window.id]))
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .disabled(visible == [window.id])
+                    }
+                    if state.hiddenWindowCount > 0 {
+                        Button("모두 표시") { onSetVisibleWindows(nil) }
+                            .buttonStyle(.borderless)
+                    }
+                }
+                .font(Theme.caption)
+                .padding(.top, Theme.panelSmall)
+            } label: {
+                Text(state.hiddenWindowCount == 0
+                     ? "표시할 모델 · 전체"
+                     : "표시할 모델 · \(visible.count)/\(windows.count)개")
+                    .font(Theme.caption)
+            }
+            .accessibilityLabel("\(state.profile.name) 표시할 모델")
+        }
+    }
+
+    private func windowTitle(_ window: CodexQuotaWindow) -> String {
+        let duration = window.windowDurationMins.map(CodexQuotaWindow.durationLabel(minutes:))
+        return [window.label, duration == window.label ? nil : duration].compactMap { $0 }.joined(separator: " · ")
     }
 
     private var status: String {

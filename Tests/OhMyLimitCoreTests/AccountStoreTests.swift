@@ -106,6 +106,23 @@ struct AccountStoreTests {
         #expect(profile.provider == .codex)
         #expect(profile.homePath == "/original/codex")
         #expect(profile.isManaged)
+        #expect(profile.visibleWindowIDs == nil)
+    }
+
+    @Test func visibleWindowSelectionSurvivesRoundTripSortedAndUnique() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("Visible-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = AccountStore(directory: root)
+        var profile = AccountProfile(name: "Antigravity", homePath: "/oauth", isManaged: false,
+                                     provider: .antigravity, authentication: .oauth,
+                                     visibleWindowIDs: ["gemini-weekly", "3p-5h", "gemini-weekly"])
+        #expect(profile.visibleWindowIDs == ["3p-5h", "gemini-weekly"])
+        profile.visibleWindowIDs = ["b", "a", "b"]
+        #expect(profile.visibleWindowIDs == ["a", "b"])
+
+        try store.save([profile])
+
+        #expect(try store.load() == [profile])
     }
 
     @Test func multipleLocalAntigravityProfilesAreRejected() throws {

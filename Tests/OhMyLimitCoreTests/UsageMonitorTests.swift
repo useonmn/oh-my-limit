@@ -241,6 +241,93 @@ struct UsageMonitorTests {
         #expect(state.menuWindow?.id == "claude-weekly")
     }
 
+    nonisolated private func antigravityWindows() -> [CodexQuotaWindow] {
+        [
+            CodexQuotaWindow(id: "gemini-5h", label: "Gemini", usedPercent: 90,
+                windowDurationMins: 300, resetsAt: nil),
+            CodexQuotaWindow(id: "gemini-weekly", label: "Gemini", usedPercent: 20,
+                windowDurationMins: 10_080, resetsAt: nil),
+            CodexQuotaWindow(id: "3p-weekly", label: "Claude + GPT", usedPercent: 70,
+                windowDurationMins: 10_080, resetsAt: nil),
+        ]
+    }
+
+    @Test func visibleWindowsKeepServerOrderAndFallBackWhenNoSelectedModelExists() {
+        var state = AccountState(
+            profile: AccountProfile(name: "Antigravity", homePath: "/local/user", isManaged: false,
+                                    provider: .antigravity),
+            snapshot: CodexUsageSnapshot(identity: CodexIdentity(), windows: antigravityWindows(), fetchedAt: now)
+        )
+        #expect(state.visibleWindows.map(\.id) == ["gemini-5h", "gemini-weekly", "3p-weekly"])
+        #expect(state.hiddenWindowCount == 0)
+
+        state.profile.visibleWindowIDs = ["3p-weekly", "gemini-5h", "renamed-model"]
+        #expect(state.visibleWindows.map(\.id) == ["gemini-5h", "3p-weekly"])
+        #expect(state.hiddenWindowCount == 1)
+
+        state.profile.visibleWindowIDs = ["renamed-model"]
+        #expect(state.visibleWindows.map(\.id) == ["gemini-5h", "gemini-weekly", "3p-weekly"])
+        #expect(state.hiddenWindowCount == 0)
+    }
+
+    @Test func antigravityMenuChoosesOnlyAmongSelectedWindows() {
+        var state = AccountState(
+            profile: AccountProfile(name: "Antigravity", homePath: "/local/user", isManaged: false,
+                                    provider: .antigravity),
+            snapshot: CodexUsageSnapshot(identity: CodexIdentity(), windows: antigravityWindows(), fetchedAt: now)
+        )
+        #expect(state.menuWindow?.id == "3p-weekly")
+
+        state.profile.visibleWindowIDs = ["gemini-5h", "gemini-weekly"]
+        #expect(state.menuWindow?.id == "gemini-weekly")
+
+        state.profile.visibleWindowIDs = ["gemini-5h"]
+        #expect(state.menuWindow?.id == "gemini-5h")
+    }
+
+    @Test func codexMenuShowsASelectedWindowWhenMainQuotaIsHidden() {
+        var state = AccountState(
+            profile: AccountProfile(name: "Codex", homePath: "/fixture", isManaged: false, authentication: .oauth),
+            snapshot: CodexUsageSnapshot(identity: CodexIdentity(), windows: [
+                CodexQuotaWindow(id: "codex.primary", label: "주간", usedPercent: 40,
+                    windowDurationMins: 10_080, resetsAt: nil),
+                CodexQuotaWindow(id: "spark.primary", label: "Spark", usedPercent: 12,
+                    windowDurationMins: 300, resetsAt: nil),
+            ], fetchedAt: now)
+        )
+        #expect(state.menuWindow?.id == "codex.primary")
+
+        state.profile.visibleWindowIDs = ["spark.primary"]
+        #expect(state.menuWindow?.id == "spark.primary")
+    }
+
+    @Test func visibleWindowSelectionPersistsAndFullSetMeansShowAll() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("Visible-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let data = CodexUsageSnapshot(
+            identity: CodexIdentity(email: "local@example.com"), windows: antigravityWindows(),
+            fetchedAt: now, source: .antigravityApp
+        )
+        let monitor = makeMonitor(store: AccountStore(directory: root), fetchAntigravity: { data })
+        let id = try #require(monitor.connectAntigravity())
+        await monitor.refresh(id)?.value
+
+        #expect(monitor.setVisibleWindows(id, ["gemini-weekly", "gemini-5h"]))
+        #expect(monitor.accounts[0].profile.visibleWindowIDs == ["gemini-5h", "gemini-weekly"])
+        #expect(try monitor.store.load()[0].visibleWindowIDs == ["gemini-5h", "gemini-weekly"])
+
+        let restored = makeMonitor(store: monitor.store)
+        #expect(restored.accounts[0].profile.visibleWindowIDs == ["gemini-5h", "gemini-weekly"])
+        #expect(restored.accounts[0].visibleWindows.map(\.id) == ["gemini-5h", "gemini-weekly"])
+        #expect(restored.accounts[0].menuWindow?.id == "gemini-weekly")
+
+        #expect(monitor.setVisibleWindows(id, Set(data.windows.map(\.id))))
+        #expect(monitor.accounts[0].profile.visibleWindowIDs == nil)
+        #expect(monitor.setVisibleWindows(id, ["3p-weekly"]))
+        #expect(monitor.setVisibleWindows(id, nil))
+        #expect(try monitor.store.load()[0].visibleWindowIDs == nil)
+    }
+
     @Test func antigravityRefreshNeedsNoCodexAndRestoresItsOwnCache() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

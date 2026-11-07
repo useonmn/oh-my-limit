@@ -336,7 +336,8 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
             loginAccount: { [weak self] id in self?.login(id) },
             cancelLogin: { [weak self] id in self?.monitor?.cancel(id) },
             authorizeKeychain: { [weak self] id in self?.monitor?.authorizeKeychain(id) },
-            disconnectAccount: { [weak self] id in self?.monitor?.disconnect(id) }
+            disconnectAccount: { [weak self] id in self?.monitor?.disconnect(id) },
+            setVisibleWindows: { [weak self] id, ids in self?.monitor?.setVisibleWindows(id, ids) }
         )
     }
 
