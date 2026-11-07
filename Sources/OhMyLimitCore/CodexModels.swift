@@ -59,6 +59,14 @@ public struct CodexQuotaWindow: Codable, Sendable, Equatable, Identifiable {
 extension CodexQuotaWindow {
     public var isWeekly: Bool { windowDurationMins == 10_080 }
 
+    /// Korean period label for a window length: 주간, N일, N시간, or N분.
+    public static func durationLabel(minutes: Int) -> String {
+        if minutes == 10_080 { return "주간" }
+        if minutes % 1_440 == 0 { return "\(minutes / 1_440)일" }
+        if minutes % 60 == 0 { return "\(minutes / 60)시간" }
+        return "\(minutes)분"
+    }
+
     public func hasExpired(at now: Date) -> Bool {
         resetsAt.map { $0 <= now } ?? false
     }

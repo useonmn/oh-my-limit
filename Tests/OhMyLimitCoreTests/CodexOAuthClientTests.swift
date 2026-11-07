@@ -248,6 +248,116 @@ import Testing
             try CodexRemoteParser.usage(from: Data("{}".utf8), credentials: codexCredentials())
         }
     }
+
+    @Test func spendCapOnlySeatRendersCreditWindow() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let body = """
+        {"plan_type":"enterprise","rate_limit":null,
+         "spend_control":{"reached":false,"individual_limit":{"unit":"credits","limit":"200","used":50,
+            "remaining":150,"used_percent":26,"reset_after_seconds":3600}}}
+        """
+        let snapshot = try CodexRemoteParser.usage(from: Data(body.utf8), credentials: codexCredentials(), now: now)
+        #expect(snapshot.windows.map(\.id) == ["codex.spend-cap"])
+        let cap = snapshot.windows[0]
+        #expect(cap.label == "크레딧 한도")
+        #expect(cap.usageKnown)
+        #expect(cap.usedPercent == 25)
+        #expect(cap.windowDurationMins == nil)
+        #expect(cap.resetsAt == now.addingTimeInterval(3600))
+        #expect(snapshot.ordinaryUsageAllowed == true)
+    }
+
+    @Test func reachedSpendCapIsExhaustedEvenWithoutPercent() throws {
+        for individual in [#"{"remaining":0}"#, #"{"limit":100}"#] {
+            let body = #"{"spend_control":{"reached":true,"individual_limit":\#(individual)}}"#
+            let snapshot = try CodexRemoteParser.usage(from: Data(body.utf8), credentials: codexCredentials())
+            #expect(snapshot.windows.map(\.usedPercent) == [100])
+            #expect(snapshot.windows.map(\.usageKnown) == [true])
+            #expect(snapshot.ordinaryUsageAllowed == false)
+        }
+    }
+
+    @Test func spendCapBesidePlanWindowsKeepsPlanVerdictAndOrder() throws {
+        let body = """
+        {"rate_limit":{"allowed":true,"limit_reached":false,
+            "secondary_window":{"used_percent":10,"limit_window_seconds":604800}},
+         "spend_control":{"reached":true,"individual_limit":{"used":5,"limit":10}}}
+        """
+        let snapshot = try CodexRemoteParser.usage(from: Data(body.utf8), credentials: codexCredentials())
+        #expect(snapshot.windows.map(\.id) == ["codex.secondary", "codex.spend-cap"])
+        #expect(snapshot.windows[1].usedPercent == 50)
+        #expect(snapshot.ordinaryUsageAllowed == true)
+    }
+
+    @Test(arguments: [(#"12.5"#, "12.5"), (#"40"#, "40"), (#""7.25""#, "7.25")])
+    func creditBalanceAcceptsNumberOrString(_ balance: String, _ expected: String) throws {
+        let body = """
+        {"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":18000}},
+         "credits":{"has_credits":true,"unlimited":false,"balance":\(balance)}}
+        """
+        let snapshot = try CodexRemoteParser.usage(from: Data(body.utf8), credentials: codexCredentials())
+        #expect(snapshot.credits == expected)
+    }
+
+    @Test func resetTimeAcceptsMillisecondsAndFallsBackToResetAfter() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let body = """
+        {"rate_limit":{
+            "primary_window":{"used_percent":1,"limit_window_seconds":18000,"reset_at":1800000123000,"reset_after_seconds":5},
+            "secondary_window":{"used_percent":2,"limit_window_seconds":604800,"reset_after_seconds":90}}}
+        """
+        let windows = try CodexRemoteParser.usage(from: Data(body.utf8), credentials: codexCredentials(), now: now).windows
+        #expect(windows[0].resetsAt == Date(timeIntervalSince1970: 1_800_000_123))
+        #expect(windows[1].resetsAt == now.addingTimeInterval(90))
+    }
+
+    @Test func absurdResetsAndSpendRatiosNeitherCrashNorRender() throws {
+        let body = """
+        {"rate_limit":{
+            "primary_window":{"used_percent":1,"limit_window_seconds":18000,"reset_after_seconds":6e20},
+            "secondary_window":{"used_percent":2,"limit_window_seconds":604800,"reset_at":6e23}},
+         "spend_control":{"individual_limit":{"used":"1e300","limit":"1e-10"}}}
+        """
+        let windows = try CodexRemoteParser.usage(from: Data(body.utf8), credentials: codexCredentials()).windows
+        #expect(windows.map(\.resetsAt) == [nil, nil, nil])
+        #expect(windows.map(\.usageKnown) == [true, true, false])
+    }
+
+    @Test func mainWindowLabelsComeFromDuration() throws {
+        let body = """
+        {"rate_limit":{"primary_window":{"used_percent":1,"limit_window_seconds":10800},
+                       "secondary_window":{"used_percent":2,"limit_window_seconds":"172800"}}}
+        """
+        let windows = try CodexRemoteParser.usage(from: Data(body.utf8), credentials: codexCredentials()).windows
+        #expect(windows.map(\.label) == ["3시간", "2일"])
+        #expect(windows.map(\.windowDurationMins) == [180, 2_880])
+        let unknown = #"{"rate_limit":{"primary_window":{"used_percent":1},"secondary_window":{"used_percent":2}}}"#
+        let fallback = try CodexRemoteParser.usage(from: Data(unknown.utf8), credentials: codexCredentials()).windows
+        #expect(fallback.map(\.label) == ["기본 한도", "보조 한도"])
+    }
+
+    @Test(arguments: [(#""allowed":true,"limit_reached":true,"#, false), (#""limit_reached":true,"#, false),
+                      (#""allowed":false,"limit_reached":false,"#, false), (#""allowed":true,"#, true),
+                      ("", nil)] as [(String, Bool?)])
+    func limitReachedDeniesOrdinaryUsage(_ verdict: String, _ expected: Bool?) throws {
+        let body = #"{"rate_limit":{\#(verdict)"primary_window":{"used_percent":100,"limit_window_seconds":18000}}}"#
+        let snapshot = try CodexRemoteParser.usage(from: Data(body.utf8), credentials: codexCredentials())
+        #expect(snapshot.ordinaryUsageAllowed == expected)
+    }
+
+    @Test func malformedSiblingsDegradeInsteadOfFailing() throws {
+        let body = """
+        {"rate_limit":{"allowed":"yes","primary_window":{},"secondary_window":{"used_percent":3,"limit_window_seconds":604800,"reset_at":1.7e9}},
+         "additional_rate_limits":["bad",{"limit_name":"Spark","rate_limit":{"primary_window":{"used_percent":4}}}],
+         "credits":"bad"}
+        """
+        let snapshot = try CodexRemoteParser.usage(from: Data(body.utf8), credentials: codexCredentials())
+        #expect(snapshot.windows.map(\.id) == ["codex.secondary", "extra.1.unnamed.primary"])
+        #expect(snapshot.windows[0].resetsAt == Date(timeIntervalSince1970: 1_700_000_000))
+        #expect(snapshot.windows[1].label == "Spark")
+        #expect(snapshot.ordinaryUsageAllowed == nil)
+        #expect(snapshot.credits == nil)
+    }
 }
 
 func codexCredentials() -> CodexOAuthCredentials {

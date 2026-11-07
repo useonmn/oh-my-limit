@@ -52,11 +52,7 @@ struct QuotaRow: View {
     }
 
     private var durationLabel: String? {
-        guard let minutes = window.windowDurationMins else { return nil }
-        if window.isWeekly { return "주간" }
-        if minutes % 1_440 == 0 { return "\(minutes / 1_440)일" }
-        if minutes % 60 == 0 { return "\(minutes / 60)시간" }
-        return "\(minutes)분"
+        window.windowDurationMins.map(CodexQuotaWindow.durationLabel(minutes:))
     }
 
     private var resetDescription: String {

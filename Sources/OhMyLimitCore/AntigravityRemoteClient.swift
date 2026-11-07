@@ -4,18 +4,23 @@ import CoreFoundation
 /// Read-only Cloud Code quota requests using exactly the supplied account's access token.
 /// Token renewal and persistence belong to the caller, not this client.
 public struct AntigravityRemoteClient: Sendable {
-    private let loopbackPort: Int?
+    private let loopbackPorts: [Int]
     private let timeout: TimeInterval
+    private let version: AntigravityClientVersion
 
     public init() {
-        loopbackPort = nil
+        loopbackPorts = []
         timeout = 10
+        version = .shared
     }
 
-    /// Internal test seam: only a literal loopback address, never an arbitrary remote origin.
-    init(loopbackPort: Int, timeout: TimeInterval = 10) {
-        self.loopbackPort = loopbackPort
+    /// Internal test seam: only literal loopback addresses, never an arbitrary remote origin.
+    /// `fallbackLoopbackPort` stands in for the sandbox quota host.
+    init(loopbackPort: Int, fallbackLoopbackPort: Int? = nil, timeout: TimeInterval = 10,
+         version: AntigravityClientVersion = AntigravityClientVersion(manifestURL: nil)) {
+        loopbackPorts = [loopbackPort] + (fallbackLoopbackPort.map { [$0] } ?? [])
         self.timeout = timeout
+        self.version = version
     }
 
     public func fetchUsage(credentials: AntigravityOAuthCredentials) async throws -> CodexUsageSnapshot {
@@ -24,8 +29,10 @@ public struct AntigravityRemoteClient: Sendable {
               credentials.accessToken.unicodeScalars.allSatisfy({ (33...126).contains($0.value) }) else {
             throw AntigravityOAuthError.signInRequired
         }
-        if let loopbackPort, !(1...65535).contains(loopbackPort) { throw AntigravityOAuthError.invalidResponse }
-        let peer = AntigravityRemoteSession(timeout: timeout)
+        guard loopbackPorts.allSatisfy({ (1...65535).contains($0) }) else { throw AntigravityOAuthError.invalidResponse }
+        let userAgent = AntigravityClientVersion.userAgent(await version.current())
+        try Task.checkCancellation()
+        let peer = AntigravityRemoteSession(timeout: timeout, userAgent: userAgent)
         defer { peer.session.invalidateAndCancel() }
         do {
             let assist: [String: Any]
@@ -112,21 +119,42 @@ public struct AntigravityRemoteClient: Sendable {
 
     private func request(_ peer: AntigravityRemoteSession, _ method: String, token: String,
                          body: [String: Any]) async throws -> Data {
-        try Task.checkCancellation()
         // Antigravity accounting uses the dedicated host, as in OpenCodex 2.55.0.
-        let origin = loopbackPort.map { "http://127.0.0.1:\($0)" }
-            ?? (method == "loadCodeAssist"
-                ? "https://cloudcode-pa.googleapis.com" : "https://daily-cloudcode-pa.googleapis.com")
-        let url = URL(string: "\(origin)/v1internal:\(method)")!
+        let origins: [String]
+        if !loopbackPorts.isEmpty {
+            origins = (method == "loadCodeAssist" ? [loopbackPorts[0]] : loopbackPorts).map { "http://127.0.0.1:\($0)" }
+        } else if method == "loadCodeAssist" {
+            origins = ["https://cloudcode-pa.googleapis.com"]
+        } else {
+            origins = ["https://daily-cloudcode-pa.googleapis.com", "https://daily-cloudcode-pa.sandbox.googleapis.com"]
+        }
+        // Adapted from oh-my-pi (MIT) usage/google-antigravity.ts: a transient failure on one quota
+        // host falls through to the next. Auth, permission and unsupported answers are final.
+        for origin in origins.dropLast() {
+            do {
+                return try await send(peer, url: URL(string: "\(origin)/v1internal:\(method)")!, token: token, body: body)
+            } catch {
+                guard Self.isTransient(error), !Task.isCancelled, !peer.rejectedAuthentication else { throw error }
+            }
+        }
+        return try await send(peer, url: URL(string: "\(origins.last!)/v1internal:\(method)")!, token: token, body: body)
+    }
+
+    private static func isTransient(_ error: any Error) -> Bool {
+        if let error = error as? AntigravityOAuthError { return error == .timedOut || error == .networkFailure }
+        guard let error = error as? URLError else { return false }
+        return ![.cancelled, .userAuthenticationRequired, .userCancelledAuthentication].contains(error.code)
+    }
+
+    private func send(_ peer: AntigravityRemoteSession, url: URL, token: String,
+                      body: [String: Any]) async throws -> Data {
+        try Task.checkCancellation()
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue(
-            "antigravity/ide/2.5.5 (os_type=macos; arch=arm64; aidev_client; auth_method=oauth)",
-            forHTTPHeaderField: "User-Agent"
-        )
+        request.setValue(peer.userAgent, forHTTPHeaderField: "User-Agent")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         guard request.httpBody!.count <= Self.maximumBytes else { throw AntigravityOAuthError.invalidResponse }
         let (bytes, response) = try await peer.session.bytes(for: request)
@@ -188,7 +216,7 @@ public struct AntigravityRemoteClient: Sendable {
             let model = models[id] as? [String: Any] ?? [:]
             let quota = model["quotaInfo"] as? [String: Any] ?? [:]
             return RemoteMeasurement(id: id, label: text(model["displayName"]) ?? text(model["label"]) ?? id,
-                remaining: model["disabled"] as? Bool == true ? nil : fraction(quota),
+                remaining: model["disabled"] as? Bool == true ? nil : fraction(quota) ?? blockedUntilReset(quota),
                 reset: date(quota["resetTime"]), description: text(quota["description"]))
         }
     }
@@ -210,6 +238,15 @@ public struct AntigravityRemoteClient: Sendable {
               CFGetTypeID(value) != CFBooleanGetTypeID(), value.doubleValue.isFinite,
               (0...1).contains(value.doubleValue) else { return nil }
         return value.doubleValue
+    }
+
+    /// Adapted from oh-my-pi (MIT) usage/google-antigravity.ts: model-level quota omits
+    /// `remainingFraction` for an exhausted counter and keeps only `resetTime`. A present but
+    /// malformed fraction stays unknown.
+    private static func blockedUntilReset(_ quota: [String: Any]) -> Double? {
+        guard quota["disabled"] as? Bool != true, quota["remainingFraction"] == nil,
+              date(quota["resetTime"]) != nil else { return nil }
+        return 0
     }
 
     private static func tier(_ raw: Any?) -> String? {
@@ -235,10 +272,14 @@ private enum AntigravityRemoteEndpointError: Error { case unsupported }
 /// Default system TLS verification; no custom trust, shared state, or redirect following.
 private final class AntigravityRemoteSession: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     let timeout: TimeInterval
+    let userAgent: String
     private let lock = NSLock()
     private var authenticationRejected = false
     var rejectedAuthentication: Bool { lock.withLock { authenticationRejected } }
-    init(timeout: TimeInterval) { self.timeout = timeout }
+    init(timeout: TimeInterval, userAgent: String) {
+        self.timeout = timeout
+        self.userAgent = userAgent
+    }
 
     lazy var session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
@@ -267,6 +308,130 @@ private final class AntigravityRemoteSession: NSObject, URLSessionTaskDelegate, 
             // A proxy's own challenge is a network problem, not an expired Google sign-in.
             if !challenge.protectionSpace.isProxy() { lock.withLock { authenticationRejected = true } }
             completionHandler(.cancelAuthenticationChallenge, nil)
+        }
+    }
+}
+
+/// Antigravity client version for the `User-Agent`. The backend gates on the version, so it tracks
+/// the official update manifest, looked up at most once per run (retried after a failure only once
+/// `retryInterval` has passed), held in memory only, with a pinned fallback.
+/// Adapted from oh-my-pi (MIT) wire/gemini-headers.ts.
+actor AntigravityClientVersion {
+    static let shared = AntigravityClientVersion(manifestURL: URL(
+        string: "https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/manifest/latest-arm64-mac.yml"))
+    static let fallbackVersion = "2.26.0"
+    private static let retryInterval: TimeInterval = 600
+    private static let maximumManifestBytes = 65_536
+
+    private let manifestURL: URL?
+    private let timeout: TimeInterval
+    private var discovered: String?
+    private var lookup: Task<Void, Never>?
+    private var failedAt: Date?
+    private var waiters: [UUID: CheckedContinuation<String, Never>] = [:]
+
+    /// A nil manifest URL never touches the network and always reports the fallback.
+    init(manifestURL: URL?, timeout: TimeInterval = 3) {
+        self.manifestURL = manifestURL
+        self.timeout = timeout
+    }
+
+    /// Waits for the shared lookup. A cancelled caller stops waiting at once and gets the best
+    /// known version; the lookup itself keeps running for the other callers.
+    func current() async -> String {
+        if let discovered { return discovered }
+        guard let manifestURL else { return Self.fallbackVersion }
+        if lookup == nil {
+            if let failedAt, Date().timeIntervalSince(failedAt) < Self.retryInterval { return Self.fallbackVersion }
+            let timeout = self.timeout
+            lookup = Task { await self.complete(Self.fetchVersion(manifestURL, timeout: timeout)) }
+        }
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled { continuation.resume(returning: discovered ?? Self.fallbackVersion) }
+                else { waiters[id] = continuation }
+            }
+        } onCancel: {
+            Task { await self.release(id) }
+        }
+    }
+
+    private func complete(_ version: String?) {
+        lookup = nil
+        if let version { discovered = version } else { failedAt = Date() }
+        let result = discovered ?? Self.fallbackVersion
+        let pending = waiters.values
+        waiters = [:]
+        for continuation in pending { continuation.resume(returning: result) }
+    }
+
+    private func release(_ id: UUID) {
+        waiters.removeValue(forKey: id)?.resume(returning: discovered ?? Self.fallbackVersion)
+    }
+
+    /// Captured from the real `antigravity/hub` client. The macOS build is arm64 only and the
+    /// backend does not validate `cl`; only the version gates.
+    static func userAgent(_ version: String) -> String {
+        "antigravity/hub/\(version) (aidev_client; os_type=darwin; arch=arm64; cl=1005016104)"
+    }
+
+    /// The first `version:` line of an electron-builder manifest, if it is a plain `x.y.z`.
+    static func manifestVersion(_ yaml: String) -> String? {
+        for line in yaml.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
+            var rest = line.drop { $0 == " " || $0 == "\t" }
+            guard rest.hasPrefix("version") else { continue }
+            rest = rest.dropFirst("version".count).drop { $0 == " " || $0 == "\t" }
+            guard rest.first == ":" else { continue }
+            let body = rest.dropFirst().drop { $0 == " " || $0 == "\t" }
+            let value: Substring
+            let tail: Substring
+            if let quote = body.first, quote == "\"" || quote == "'" {
+                let inner = body.dropFirst()
+                guard let end = inner.firstIndex(of: quote) else { continue }
+                value = inner[..<end]
+                tail = inner[inner.index(after: end)...]
+            } else {
+                value = body.prefix { !$0.isWhitespace && $0 != "#" }
+                tail = body.dropFirst(value.count)
+            }
+            let trailing = tail.drop { $0 == " " || $0 == "\t" }
+            guard !value.isEmpty, trailing.isEmpty || trailing.first == "#" else { continue }
+            let version = value.trimmingCharacters(in: .whitespaces)
+            let parts = version.split(separator: ".", omittingEmptySubsequences: false)
+            let valid = parts.count == 3 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isNumber } }
+            return valid ? version : nil
+        }
+        return nil
+    }
+
+    private static func fetchVersion(_ url: URL, timeout: TimeInterval) async -> String? {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCredentialStorage = nil
+        configuration.urlCache = nil
+        configuration.timeoutIntervalForRequest = timeout
+        configuration.timeoutIntervalForResource = timeout
+        configuration.waitsForConnectivity = false
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("electron-builder", forHTTPHeaderField: "User-Agent")
+        do {
+            let (bytes, response) = try await session.bytes(for: request)
+            defer { bytes.task.cancel() }
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+                  response.expectedContentLength <= maximumManifestBytes else { return nil }
+            var data = Data()
+            for try await byte in bytes {
+                guard data.count < maximumManifestBytes else { return nil }
+                data.append(byte)
+            }
+            return manifestVersion(String(decoding: data, as: UTF8.self))
+        } catch {
+            return nil
         }
     }
 }

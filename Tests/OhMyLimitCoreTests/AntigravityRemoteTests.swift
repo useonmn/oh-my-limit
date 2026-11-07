@@ -56,7 +56,7 @@ import Testing
 
     @Test func requestsIdentifyAntigravityInsteadOfUnsupportedGeminiClient() async throws {
         let server = try AntigravityLoopbackFixture { request in
-            guard request.contains("\r\nUser-Agent: antigravity/ide/") else {
+            guard request.contains("\r\nUser-Agent: antigravity/hub/2.26.0 (aidev_client; os_type=darwin; arch=arm64; cl=1005016104)\r\n") else {
                 return AntigravityLoopbackFixture.response(
                     #"{"error":{"code":403,"status":"PERMISSION_DENIED"}}"#, status: 403
                 )
@@ -85,7 +85,10 @@ import Testing
     func emptySummaryDoesNotFallBack(_ body: String) async throws {
         try await Self.run(Self.fixture(summary: body)) { response, requests in
             let result = try response.get()
-            #expect(result.windows.allSatisfy { !$0.usageKnown })
+            #expect(result.windows.prefix(4).allSatisfy { !$0.usageKnown })
+            // A bucket outside the fixed schema is kept, not silently dropped.
+            #expect(result.windows.dropFirst(4).map(\.id) == (body.contains("future") ? ["future"] : []))
+            #expect(result.windows.dropFirst(4).allSatisfy { $0.usageKnown && $0.usedPercent == 100 })
             #expect(result.identity.accountID == Self.credentials.accountID)
             #expect(requests.count == 2)
         }
@@ -115,6 +118,19 @@ import Testing
             let gemini = try #require(result.windows.first { $0.label == "Gemini" })
             #expect(gemini.usedPercent == 75)
             #expect(gemini.resetsAt != nil)
+            #expect(requests.count == 3)
+        }
+    }
+
+    @Test func modelResetWithoutFractionIsExhausted() async throws {
+        let models = #"{"models":{"gemini":{"quotaInfo":{"resetTime":"2026-09-16T12:00:00Z"}},"claude":{"quotaInfo":{"remainingFraction":1,"resetTime":"2026-09-16T12:00:00Z"}}}}"#
+        try await Self.run(Self.fixture(summary: "{}", summaryStatus: 404, models: models)) { response, requests in
+            let windows = try response.get().windows
+            let gemini = try #require(windows.first { $0.id == "gemini" })
+            #expect(gemini.usageKnown)
+            #expect(gemini.usedPercent == 100)
+            #expect(gemini.resetsAt != nil)
+            // An exhausted member means availability is not all-full: no dedicated detail call.
             #expect(requests.count == 3)
         }
     }
@@ -251,5 +267,116 @@ import Testing
         do { _ = try await task.value; Issue.record("Expected cancellation") }
         catch { #expect(error is CancellationError) }
         await server.stop()
+    }
+
+    static func runWithFallback(primary: AntigravityLoopbackFixture, fallback: AntigravityLoopbackFixture,
+                                check: (Result<CodexUsageSnapshot, any Error>, [String], [String]) throws -> Void) async throws {
+        let primaryPort = try await primary.start()
+        let fallbackPort: Int
+        do { fallbackPort = try await fallback.start() } catch { await primary.stop(); throw error }
+        let result: Result<CodexUsageSnapshot, any Error>
+        do {
+            result = .success(try await AntigravityRemoteClient(loopbackPort: primaryPort, fallbackLoopbackPort: fallbackPort)
+                .fetchUsage(credentials: credentials))
+        } catch { result = .failure(error) }
+        let primaryRequests = await primary.requests()
+        let fallbackRequests = await fallback.requests()
+        await primary.stop()
+        await fallback.stop()
+        try check(result, primaryRequests, fallbackRequests)
+    }
+
+    @Test(arguments: [408, 429, 500, 503])
+    func transientQuotaHostFailureFallsThroughToNextHost(_ status: Int) async throws {
+        try await Self.runWithFallback(primary: Self.fixture(summary: "{}", summaryStatus: status),
+                                       fallback: Self.fixture(summary: Self.summary)) { response, primary, fallback in
+            let snapshot = try response.get()
+            #expect(snapshot.windows[0].usedPercent == 25)
+            #expect(primary.count == 2)
+            #expect(fallback.count == 1)
+            #expect(fallback.first?.hasPrefix("POST /v1internal:retrieveUserQuotaSummary ") == true)
+            #expect(fallback.filter { !$0.contains("Authorization: Bearer fixture-access\r\n") }.isEmpty)
+        }
+    }
+
+    @Test(arguments: [401, 403, 404])
+    func finalQuotaHostAnswersDoNotFallThrough(_ status: Int) async throws {
+        try await Self.runWithFallback(primary: Self.fixture(summary: "{}", summaryStatus: status, modelsStatus: status, quotaStatus: status),
+                                       fallback: Self.fixture(summary: Self.summary)) { response, _, fallback in
+            let expected: AntigravityOAuthError = status == 401 ? .signInRequired : .quotaUnavailable
+            #expect(throws: expected) { try response.get() }
+            #expect(fallback.isEmpty)
+        }
+    }
+
+    @Test func manifestVersionParsesFirstVersionLine() {
+        #expect(AntigravityClientVersion.manifestVersion("versionCode: 9\nversion: 2.31.4\nfiles: []\n") == "2.31.4")
+        #expect(AntigravityClientVersion.manifestVersion("  version : \"2.31.4\" # latest\r\n") == "2.31.4")
+        #expect(AntigravityClientVersion.manifestVersion("version: '2.31.4'") == "2.31.4")
+        #expect(AntigravityClientVersion.manifestVersion("version: 2.31.4-beta\nversion: 2.31.4") == nil)
+        #expect(AntigravityClientVersion.manifestVersion("version: 2.31.4\r\nX-Injected: 1") == "2.31.4")
+        #expect(AntigravityClientVersion.manifestVersion("path: app.zip\n") == nil)
+    }
+
+    @Test func manifestVersionIsDiscoveredOnceAndSentAsUserAgent() async throws {
+        let manifest = try AntigravityLoopbackFixture { _ in
+            AntigravityLoopbackFixture.response("version: 2.31.4\npath: Antigravity.zip\n")
+        }
+        let manifestPort = try await manifest.start()
+        let version = AntigravityClientVersion(manifestURL: URL(string: "http://127.0.0.1:\(manifestPort)/manifest/latest-arm64-mac.yml")!)
+        let first = await version.current()
+        let second = await version.current()
+        let manifestRequests = await manifest.requests()
+        await manifest.stop()
+        #expect(first == "2.31.4")
+        #expect(second == "2.31.4")
+        #expect(manifestRequests.count == 1)
+        #expect(manifestRequests.first?.hasPrefix("GET /manifest/latest-arm64-mac.yml ") == true)
+        #expect(manifestRequests.allSatisfy { !$0.contains("fixture-access") })
+
+        let server = try Self.fixture(summary: Self.summary)
+        let port = try await server.start()
+        let result: Result<CodexUsageSnapshot, any Error>
+        do { result = .success(try await AntigravityRemoteClient(loopbackPort: port, version: version).fetchUsage(credentials: Self.credentials)) }
+        catch { result = .failure(error) }
+        let requests = await server.requests()
+        await server.stop()
+        _ = try result.get()
+        #expect(requests.count == 2)
+        #expect(requests.allSatisfy {
+            $0.contains("\r\nUser-Agent: antigravity/hub/2.31.4 (aidev_client; os_type=darwin; arch=arm64; cl=1005016104)\r\n")
+        })
+    }
+
+    @Test(arguments: [#"version: latest"#, ""])
+    func failedManifestLookupFallsBackWithoutRetrying(_ body: String) async throws {
+        let manifest = try AntigravityLoopbackFixture { _ in
+            AntigravityLoopbackFixture.response(body, status: body.isEmpty ? 500 : 200)
+        }
+        let manifestPort = try await manifest.start()
+        let version = AntigravityClientVersion(manifestURL: URL(string: "http://127.0.0.1:\(manifestPort)/manifest.yml")!)
+        let first = await version.current()
+        let second = await version.current()
+        let manifestRequests = await manifest.requests()
+        await manifest.stop()
+        #expect(first == AntigravityClientVersion.fallbackVersion)
+        #expect(second == AntigravityClientVersion.fallbackVersion)
+        #expect(manifestRequests.count == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func cancelledCallerStopsWaitingForStalledManifest() async throws {
+        let manifest = try AntigravityRemoteStalledFixture()
+        let port = try await manifest.start()
+        var arrivals = manifest.arrivals.stream.makeAsyncIterator()
+        let version = AntigravityClientVersion(manifestURL: URL(string: "http://127.0.0.1:\(port)/manifest.yml")!, timeout: 30)
+        let started = Date()
+        let waiting = Task { await version.current() }
+        _ = await arrivals.next()
+        waiting.cancel()
+        let result = await waiting.value
+        let elapsed = Date().timeIntervalSince(started)
+        await manifest.stop()
+        #expect(result == AntigravityClientVersion.fallbackVersion)
+        #expect(elapsed < 5)
     }
 }

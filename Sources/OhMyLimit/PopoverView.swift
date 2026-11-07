@@ -84,7 +84,8 @@ struct AccountCard: View {
                 }
                 if let credits = snapshot.credits {
                     HStack {
-                        Text("크레딧").foregroundStyle(Theme.panelSecondary)
+                        Text(state.profile.provider == .claude ? "추가 사용량" : "크레딧")
+                            .foregroundStyle(Theme.panelSecondary)
                         Spacer()
                         Text(credits).monospacedDigit()
                     }
@@ -497,6 +498,8 @@ private struct AccountRing: View {
             period = "주간"
         } else if window.windowDurationMins == 300 {
             period = "5시간"
+        } else if window.id == "codex.spend-cap" {
+            period = "크레딧"
         } else {
             period = "사용률"
         }

@@ -22,4 +22,9 @@ import Testing
         let data = Data("{\"id\":\"x\",\"label\":\"x\",\"usedPercent\":\"\(value)\"}".utf8)
         #expect(throws: (any Error).self) { try decoder.decode(CodexQuotaWindow.self, from: data) }
     }
+
+    @Test func durationLabelUsesExactKoreanUnits() {
+        #expect([300, 10_080, 2_880, 180, 90].map(CodexQuotaWindow.durationLabel(minutes:))
+                == ["5시간", "주간", "2일", "3시간", "90분"])
+    }
 }

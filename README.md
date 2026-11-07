@@ -287,7 +287,8 @@ bash scripts/capture-previews.sh
 
 ## 라이선스
 
-[MIT](LICENSE). 서비스 로고의 출처와 라이선스는 `Resources/ThirdPartyNotices.md`에 있습니다.
+[MIT](LICENSE). 서비스 로고(LobeHub Icons)와 사용량 조회 로직 일부(oh-my-pi)의 출처와 라이선스는
+`Resources/ThirdPartyNotices.md`에 있습니다.
 
 OpenAI·ChatGPT·Codex, Anthropic·Claude, Google·Antigravity의 이름과 로고는 각 소유자의
 상표입니다. 이 프로젝트는 비공식 프로젝트이며 이들 회사와 제휴하거나 보증을 받지 않았습니다.

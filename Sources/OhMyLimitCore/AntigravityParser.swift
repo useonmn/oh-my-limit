@@ -2,6 +2,7 @@ import Foundation
 import CoreFoundation
 
 /// Wire-only parsing. Missing, disabled or invalid measurements are never inferred as zero usage.
+/// The only inferences are omp's exhausted shapes: a reset with no fraction, or a zero remaining amount.
 enum AntigravityParser {
     private static let buckets: [(String, String, Int)] = [
         ("gemini-5h", "Gemini", 300), ("gemini-weekly", "Gemini", 10_080),
@@ -32,22 +33,75 @@ enum AntigravityParser {
     private static func summaryPayload(_ payload: [String: Any], source: UsageSource) throws -> CodexUsageSnapshot {
         guard let groups = payload["groups"] as? [Any] else { throw AntigravityClientError.malformedResponse }
         var values: [String: Measurement] = [:]
+        var extras: [(id: String, label: String, duration: Int?)] = []
         for group in groups {
-            for raw in (group as? [String: Any])?["buckets"] as? [Any] ?? [] {
+            let groupObject = group as? [String: Any]
+            for raw in groupObject?["buckets"] as? [Any] ?? [] {
                 guard let bucket = raw as? [String: Any],
                       let id = field(bucket, "bucketId", "bucket_id") as? String ?? bucket["id"] as? String,
-                      buckets.contains(where: { $0.0 == id }), values[id] == nil else { continue }
+                      values[id] == nil else { continue }
+                let disabled = bucket["disabled"] as? Bool == true
+                let isFixed = buckets.contains(where: { $0.0 == id })
+                // Adapted from oh-my-pi (MIT) usage/google-antigravity.ts: buckets beyond the fixed
+                // schema are real quota too; keep enabled ones (bounded) instead of dropping them.
+                if !isFixed {
+                    guard !disabled, extras.count < 16, let name = text(id) else { continue }
+                    extras.append((id, extraLabel(name, group: text(groupObject?["displayName"])),
+                        duration("\(text(bucket["window"]) ?? "") \(text(bucket["displayName"]) ?? "") \(name)")))
+                }
                 let remaining = bucket["remaining"] as? [String: Any] ?? [:]
                 let oneof = remaining["case"] as? String == "remainingFraction" ? remaining["value"] : nil
                 let fraction = field(bucket, "remainingFraction", "remaining_fraction")
                     ?? field(remaining, "remainingFraction", "remaining_fraction") ?? oneof
                 values[id] = Measurement(
-                    remaining: bucket["disabled"] as? Bool == true ? nil : number(fraction),
+                    remaining: disabled ? nil : number(fraction) ?? exhaustedAmount(field(bucket, "remainingAmount", "remaining_amount")),
                     reset: date(field(bucket, "resetTime", "reset_time")),
                     description: text(bucket["description"]))
             }
         }
-        return snapshot(values, identity: CodexIdentity(), source: source)
+        let fixed = snapshot(values, identity: CodexIdentity(), source: source)
+        return CodexUsageSnapshot(identity: fixed.identity, windows: fixed.windows + extras.map { id, label, duration in
+            window(id: id, label: label, duration: duration, value: values[id])
+        }, source: source)
+    }
+
+    /// Adapted from oh-my-pi (MIT) usage/google-antigravity.ts: a summary bucket without a fraction
+    /// but with `remainingAmount` 0 is exhausted. Any other amount has no known limit to compare to.
+    private static func exhaustedAmount(_ raw: Any?) -> Double? {
+        let amount: Double?
+        if let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() { amount = number.doubleValue }
+        else if let string = raw as? String { amount = Double(string.trimmingCharacters(in: .whitespaces)) }
+        else { amount = nil }
+        return amount == 0 ? 0 : nil
+    }
+
+    /// Window length from a bucket's window, display name or id. Adapted from oh-my-pi (MIT)
+    /// usage/google-antigravity.ts `classifyWindow`.
+    private static func duration(_ source: String) -> Int? {
+        let source = source.lowercased()
+        if source.contains("week") || source.contains("7d") || source.range(of: #"7[\s_-]*day"#, options: .regularExpression) != nil {
+            return 10_080
+        }
+        if source.contains("5h") || source.contains("five hour") || source.range(of: #"5[\s_-]*hour"#, options: .regularExpression) != nil {
+            return 300
+        }
+        if source.contains("day") || source.contains("daily") || source.contains("24h") { return 1_440 }
+        return nil
+    }
+
+    /// "gemini-argon-weekly" reads "Gemini (Argon)"; ids outside the known families use the group name.
+    private static func extraLabel(_ id: String, group: String?) -> String {
+        let lower = id.lowercased()
+        let family: String
+        let qualifier: Substring
+        if lower.hasPrefix("gemini-") { family = "Gemini"; qualifier = id.dropFirst("gemini-".count) }
+        else if lower.hasPrefix("3p-") { family = "Claude + GPT"; qualifier = id.dropFirst("3p-".count) }
+        else { return group ?? id }
+        let windowTokens: Set<String> = ["5h", "weekly", "week", "7d", "daily", "day", "24h"]
+        let words = qualifier.split(whereSeparator: { $0 == "-" || $0 == "_" })
+            .filter { !windowTokens.contains($0.lowercased()) }
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+        return words.isEmpty ? family : "\(family) (\(words.joined(separator: " ")))"
     }
 
     static func legacy(_ data: Data, source: UsageSource) throws -> CodexUsageSnapshot {
@@ -69,7 +123,10 @@ enum AntigravityParser {
             if let model, blacklist.contains(model) { continue }
             let id = label.lowercased().contains("gemini") ? "gemini-5h" : "3p-5h"
             let quota = config["quotaInfo"] as? [String: Any] ?? [:]
-            guard let fraction = number(quota["remainingFraction"]) else {
+            // Adapted from oh-my-pi (MIT) usage/google-antigravity.ts: an exhausted counter omits
+            // `remainingFraction` and keeps only `resetTime`; a malformed fraction stays unknown.
+            let blocked: Double? = quota["remainingFraction"] == nil && date(quota["resetTime"]) != nil ? 0 : nil
+            guard let fraction = number(quota["remainingFraction"]) ?? blocked else {
                 unknownPools.insert(id)
                 continue
             }
@@ -83,11 +140,14 @@ enum AntigravityParser {
 
     private static func snapshot(_ values: [String: Measurement], identity: CodexIdentity, source: UsageSource) -> CodexUsageSnapshot {
         CodexUsageSnapshot(identity: identity, windows: buckets.map { id, label, duration in
-            let value = values[id]
-            return CodexQuotaWindow(id: id, label: label, usedPercent: value?.remaining.map { (1 - $0) * 100 } ?? 0,
-                windowDurationMins: duration, resetsAt: value?.reset, usageKnown: value?.remaining != nil,
-                resetDescription: value?.description)
+            window(id: id, label: label, duration: duration, value: values[id])
         }, source: source)
+    }
+
+    private static func window(id: String, label: String, duration: Int?, value: Measurement?) -> CodexQuotaWindow {
+        CodexQuotaWindow(id: id, label: label, usedPercent: value?.remaining.map { (1 - $0) * 100 } ?? 0,
+            windowDurationMins: duration, resetsAt: value?.reset, usageKnown: value?.remaining != nil,
+            resetDescription: value?.description)
     }
 
     private static func object(_ data: Data) throws -> [String: Any] {
