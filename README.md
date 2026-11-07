@@ -1,70 +1,179 @@
 # Oh My Limit
 
-Codex, Claude, Antigravity 구독 사용량을 보여주는 네이티브 macOS 메뉴바 앱입니다.
-SwiftUI와 AppKit을 사용하며 외부 패키지 의존성은 없습니다.
+Codex, Claude, Antigravity 구독 사용량을 메뉴바에서 보여주는 네이티브 macOS 앱입니다.
+SwiftUI와 AppKit으로 만들었고 외부 패키지 의존성은 없습니다.
+
+- 계정마다 5시간·주간·모델별 한도의 **사용한 비율**과 초기화 시각을 표시합니다.
+- 같은 서비스의 여러 계정(예: ChatGPT 구독 두 개)을 따로 연결할 수 있습니다.
+- 각 서비스에 브라우저로 직접 로그인합니다. Codex CLI, Claude Code, Antigravity 앱이 없어도 됩니다.
+- 로그인 정보는 macOS 키체인에만 저장합니다.
 
 ## 설치
 
-터미널에서 한 줄로 최신 릴리스를 `/Applications`에 설치합니다. Apple Silicon, macOS 14 이상용입니다.
+Apple Silicon Mac, macOS 14 이상이 필요합니다. 터미널에서 한 줄로 최신 릴리스를
+`/Applications`에 설치합니다.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/useonmn/oh-my-limit/main/scripts/install.sh | bash
 ```
 
-같은 명령을 다시 실행하면 최신 버전으로 업데이트됩니다. 실행 중인 앱은 자동으로 종료한 뒤
-교체하고 다시 엽니다. DMG가 필요하면 [Releases](https://github.com/useonmn/oh-my-limit/releases)에서
-받을 수 있습니다.
+같은 명령을 다시 실행하면 최신 버전으로 업데이트됩니다. 실행 중인 앱은 자동으로
+종료한 뒤 교체하고 다시 엽니다.
 
-### 소스에서 빌드
+DMG로 설치하려면 [Releases](https://github.com/useonmn/oh-my-limit/releases)에서 받아
+앱을 `Applications`로 드래그합니다. 이 앱은 Apple 공증을 받지 않았으므로 브라우저로
+받은 DMG는 첫 실행이 차단될 수 있습니다. 그때는 **시스템 설정 → 개인정보 보호 및 보안 →
+그래도 열기**로 허용합니다.
 
+## 처음 실행
+
+메뉴바의 계기판 아이콘을 클릭합니다. Dock에는 표시되지 않습니다.
+처음 정상 실행할 때 macOS 로그인 항목으로 등록되어 다음 로그인부터 자동으로 실행됩니다.
+앱 설정의 **로그인 시 실행** 또는 **시스템 설정 → 일반 → 로그인 항목 및 확장 프로그램**에서
+끌 수 있습니다.
+
+로그인 정보를 처음 읽거나 저장할 때 macOS가 키체인 접근을 물으면 **항상 허용**을 누릅니다.
+
+## 계정 연결
+
+**설정 → 계정 추가**에서 서비스를 고르고 연결 버튼을 누르면 브라우저 로그인이 열립니다.
+메뉴바 패널의 **계정 연결…**로도 설정을 열 수 있습니다. 같은 버튼으로 계정을 더 추가할 수 있고,
+계정마다 사용량을 따로 표시합니다. 브라우저가 다른 계정으로 자동 로그인되어 있다면
+원하는 계정을 직접 선택하세요.
+
+**연결 해제**는 그 계정의 앱 내 로그인 정보와 캐시만 지웁니다. 각 서비스의 CLI나
+다른 앱의 로그인은 바꾸지 않습니다.
+
+### Codex
+
+- **ChatGPT 계정 연결**로 로그인합니다. 사용량 조회에 필요한
+  `openid profile email offline_access` 권한만 요청합니다.
+- Codex CLI나 `~/.codex` 폴더는 사용하지 않습니다.
+- 크레딧으로 과금되는 좌석은 **크레딧 한도**를 표시하고, 크레딧 잔액이 있으면 함께 보여줍니다.
+
+### Claude
+
+- **Claude 계정 연결**로 로그인하고 사용량 읽기 권한(`user:profile`)을 허용합니다.
+- 5시간·주간·모델별 주간 한도를 표시하고, 추가 사용량(overage)이 켜져 있으면
+  **추가 사용량**으로 금액을 보여줍니다.
+- Claude Code의 키체인 항목이나 `~/.claude` 파일은 읽지 않으며, 앱이 자체 갱신 토큰으로
+  로그인을 유지합니다.
+- Claude API 키, Bedrock, Vertex 연결은 이 구독 사용량 조회에 포함되지 않습니다.
+
+### Antigravity
+
+- **Google 계정 연결**로 로그인합니다. Antigravity 앱이나 CLI는 필요하지 않습니다.
+- 로그인 성공과 한도 조회 권한은 별개입니다. 한도가 제공되지 않으면 계정 이메일과
+  **로그인됨 · 사용량 미확인**을 표시합니다.
+- 이미 Antigravity 앱·IDE나 공식 `agy` CLI(1.1.11 이상)에 로그인했다면
+  **로컬 앱·CLI로 연결 → 현재 로컬 계정 연결**도 쓸 수 있습니다. 이 연결은 로컬 로그인
+  하나를 따라가므로, Antigravity에서 계정을 바꾸면 다음 조회부터 표시 계정도 바뀝니다.
+  로컬 응답에 이메일이 없으면 **이메일 미제공**으로 표시합니다.
+- 로컬 연결은 실행 중인 Antigravity 앱, `agy`, IDE의 로컬 서버를 먼저 확인하고,
+  안 되면 같은 `agy`의 버전을 확인한 뒤 다음 명령의 JSON 출력을 읽습니다.
+
+  ```sh
+  agy -p "/usage" --output-format json --print-timeout 90s
+  ```
+
+  모델 요청이나 터미널 화면 파싱은 하지 않습니다. 빈 작업 폴더, 비대화형 입력,
+  출력 크기와 시간 제한을 적용하고 취소하면 프로세스를 종료합니다.
+
+## 화면 보기
+
+- 패널 위쪽의 링은 계정별 **사용한 비율**이고, 링 아래에 계정 이름과 기준 시간창이 표시됩니다.
+  링을 누르면 그 계정의 시간창별 사용량과 초기화 시각이 아래에 나옵니다.
+- 메뉴바에는 연결 순서대로 최대 3개 계정의 **서비스 로고와 사용률**이 표시됩니다.
+  나머지나 폭(240 pt)에 들어가지 않는 계정은 `+N`으로 묶이고, 계정이 없으면 게이지 아이콘만 보입니다.
+  계정 이름은 메뉴바에 마우스를 올리거나 패널을 열면 보입니다.
+- 민트색은 정상, 주황색은 80% 이상, 빨간색은 95% 이상입니다.
+- `—`는 미확인·미제공이거나 초기화 시각이 지난 값, `~`는 오래됐거나 조회에 실패한 마지막 값입니다.
+- 새로고침은 패널 위쪽, 다시 로그인·연결 해제는 선택한 계정의 **…** 메뉴에 있습니다.
+- 패널은 시스템의 밝게/어둡게 모드를 따르며, macOS 26 이상에서는 Liquid Glass로 표시됩니다.
+
+## 표시와 갱신
+
+- 메뉴바와 링은 주간 한도를 우선 표시합니다.
+  - Codex는 본 모델 한도만 사용하며, reserve·추가 모델 수치로 대체하지 않습니다.
+  - Claude는 전체 주간 한도를, 없으면 5시간 한도를 표시합니다. 모델별 한도로 대체하지 않습니다.
+  - Antigravity는 알려진 주간 한도 중 가장 많이 사용한 값을, 없으면 다른 알려진 한도를 표시합니다.
+- 서버가 준 시간창만 표시하고, 시간창 길이를 추측해서 만들지 않습니다. 모델별·추가 한도도
+  별도 행으로 보여줍니다. Antigravity가 새로운 종류의 한도를 보내도 버리지 않고 표시합니다.
+- 서버가 사용량 값을 주지 않은 한도는 0%가 아니라 **알 수 없음**으로 표시합니다. 다만 Antigravity가
+  남은 비율 없이 초기화 시각만 보내거나 남은 양을 0으로 보내면 소진(100%)으로 표시합니다.
+- 초기화 시각이 지나도 잔여량이 복원됐다고 가정하지 않습니다.
+- 정상일 때 Codex는 약 1분, Claude와 Antigravity는 5분마다 확인합니다. 메뉴를 열거나
+  잠자기에서 돌아오면 이 주기에 따라 오래된 값을 갱신합니다.
+- 실패하면 마지막 성공값을 유지하고 자동 재시도 간격을 1분부터 최대 15분까지 늘립니다.
+  Claude가 요청 제한(429)을 알리면 서버가 정한 시간(최대 1시간)과 평소 주기 중 긴 쪽만큼 기다립니다.
+- 같은 계정의 중복 조회를 합치고, 한 계정의 로그인이나 오류가 다른 계정의 데이터를 덮어쓰지 않습니다.
+
+## 인증과 데이터
+
+- 세 서비스 모두 각 서비스의 공식 CLI·앱과 같은 **공개 OAuth 클라이언트**로 브라우저 로그인합니다.
+  그래서 서비스 쪽에서 언제든 이 접근 방식을 바꾸거나 막을 수 있습니다. OAuth 클라이언트
+  설정과 출처는 `CodexOAuthTypes.swift`, `ClaudeOAuth.swift`, `AntigravityOAuthTypes.swift`에 있습니다.
+- 사용량 조회만 합니다. 추론 요청, 에이전트 작업, 프로젝트 생성은 하지 않고 웹 쿠키도 수집하지 않습니다.
+- 접속하는 곳:
+  - Codex: `auth.openai.com`(로그인), `chatgpt.com`(사용량)
+  - Claude: `claude.com`·`platform.claude.com`(로그인), `api.anthropic.com`(사용량)
+  - Antigravity: Google 로그인, `cloudcode-pa.googleapis.com`(계정 정보),
+    `daily-cloudcode-pa.googleapis.com`(한도, 일시 장애 시 `daily-cloudcode-pa.sandbox.googleapis.com`).
+    서버가 클라이언트 버전을 확인하므로, 실행 중 한 번 Antigravity 공식 업데이트 서버
+    (`antigravity-hub-auto-updater-…run.app`)에서 최신 버전 번호만 확인해 요청에 씁니다.
+    로그인 정보는 이 서버로 보내지 않습니다.
+  - Antigravity 로컬 연결: `127.0.0.1`의 로컬 서버. 로컬 서버의 자체 서명 인증서는 루프백 주소에서만 허용합니다.
+- 리다이렉트를 따라가지 않고 공유 쿠키를 쓰지 않습니다. 브라우저 로그인 콜백은 무작위 state와
+  PKCE를 검증하는 루프백 서버로 받습니다.
+- 로그인 토큰은 계정별로 앱 전용 키체인 서비스(`local.ohmylimit.codex.oauth`,
+  `local.ohmylimit.claude.oauth`, `local.ohmylimit.antigravity.oauth`)에만 저장하고,
+  설정·캐시 파일이나 로그에는 기록하지 않습니다.
+- 계정 목록과 마지막 사용량은 사용자 전용 권한으로 다음 위치에 저장합니다. 캐시에는 계정
+  이메일이 포함될 수 있습니다.
+
+  ```text
+  ~/Library/Application Support/OhMyLimit/
+    accounts.json                  # 계정 목록 (버전 3)
+    snapshots/<account UUID>.json  # 계정별 마지막 사용량
+  ```
+
+  캐시는 계정 UUID·경로·서비스·인증 방식, 직접 연결은 로그인한 계정 ID까지 일치할 때만 복원합니다.
+- 예전 버전에서 Codex CLI 또는 Claude Code 로그인을 빌려 쓰던 계정은 앱을 열 때 목록에서
+  빠지고 안내가 표시됩니다. CLI의 로그인 파일은 건드리지 않으니 브라우저 로그인으로 다시 연결하면 됩니다.
+
+## 제거하기
+
+1. 앱 설정에서 **로그인 시 실행**을 끄거나 **시스템 설정 → 일반 → 로그인 항목 및 확장 프로그램**에서 Oh My Limit을 제거합니다.
+2. 메뉴바의 Oh My Limit을 종료하고 `/Applications/OhMyLimit.app`을 삭제합니다.
+3. (선택) 계정 목록과 마지막 사용량: `~/Library/Application Support/OhMyLimit/` 폴더를 삭제합니다.
+4. (선택) 로그인 토큰: 키체인 접근 앱에서 서비스 이름이 `local.ohmylimit.codex.oauth`,
+   `local.ohmylimit.claude.oauth`, `local.ohmylimit.antigravity.oauth`인 항목을 삭제합니다.
+5. (선택) 앱 환경설정: `defaults delete local.ohmylimit.app`을 실행합니다.
+
+## 개발
+
+Swift 6 이상이 포함된 Xcode 또는 Command Line Tools가 필요합니다.
 
 ```sh
-xcode-select --install
+xcode-select --install          # Command Line Tools가 없을 때만
 git clone https://github.com/useonmn/oh-my-limit.git
 cd oh-my-limit
-./scripts/test.sh
-./scripts/build-app.sh
-cp -R dist/OhMyLimit.app /Applications/
-open /Applications/OhMyLimit.app
-```
-
-`xcode-select --install`은 이미 Command Line Tools가 설치되어 있으면 생략합니다.
-저장소에는 계정 정보나 인증 토큰이 없습니다. 앱을 처음 열고 Codex, Claude,
-Antigravity 계정을 브라우저 로그인으로 연결합니다. 로그인 정보는 키체인과
-`~/Library/Application Support/OhMyLimit/`에만 저장됩니다.
-
-릴리스를 올리려면 `gh` 로그인 상태에서 `./scripts/release.sh`를 실행합니다.
-`Resources/Info.plist`의 버전으로 `v<버전>` 릴리스를 만들고, 설치 스크립트가 받는
-`OhMyLimit-macOS-arm64.zip`과 DMG를 올립니다.
-
-## 실행
-
-필요한 환경:
-
-- macOS 14 이상
-- 소스에서 직접 빌드할 때만 Swift 6 이상이 포함된 Xcode 또는 Command Line Tools
-- Codex: ChatGPT 계정과 브라우저 (Codex CLI 불필요)
-- Claude: Claude 계정과 브라우저 (Claude Code 불필요)
-- Antigravity 직접 연결: Google 계정과 브라우저 (앱·CLI 설치 불필요)
-- Antigravity 로컬 연결: 로그인된 Antigravity 앱/IDE 또는 공식 `agy` CLI 1.1.11 이상
-
-```sh
-./scripts/build-app.sh
+./scripts/test.sh               # 테스트
+./scripts/build-app.sh          # dist/OhMyLimit.app
 open dist/OhMyLimit.app
 ```
 
-메뉴바의 계기판 아이콘을 클릭합니다. Dock에는 표시되지 않습니다.
-`dist/OhMyLimit.app`을 Applications 폴더로 복사해 사용할 수도 있습니다.
-`Oh My Limit Dev` 인증서가 있으면 그 인증서로, 없으면 ad-hoc으로 로컬 서명하며
-Developer ID 공증 배포본은 아닙니다.
-첫 정상 실행 때 macOS 로그인 항목으로 등록되며, 다음 macOS 로그인부터 자동 실행됩니다.
-자동 실행은 앱 설정의 **로그인 시 실행** 또는 **시스템 설정 → 일반 → 로그인 항목 및 확장 프로그램**에서 끌 수 있습니다.
+저장소에는 계정 정보나 인증 토큰이 없고, 테스트도 실제 계정이나 네트워크를 쓰지 않습니다.
+Antigravity 테스트는 루프백 HTTP 서버와 가짜 CLI로 파싱, 계정 식별, 로컬 우선순위,
+CLI 버전 검사, 출력 제한, 취소와 정리를 검증합니다. OAuth 테스트는 콜백, 토큰 교환·갱신,
+계정별 저장·해제, 한도 거절, 리다이렉트 차단, 취소 중 늦은 응답을 검증합니다.
+테스트 통과가 실제 계정의 권한이나 한도 제공을 보장하지는 않으니 실제 조회는 각자 계정으로 확인하세요.
 
-## 키체인 접근을 유지하는 서명 인증서 만들기
+### 서명 인증서 (소스에서 빌드할 때만)
 
-ad-hoc 서명은 빌드할 때마다 다른 앱으로 인식되어 실행할 때마다 키체인 접근을
-다시 묻습니다. 한 번 자체 서명 인증서 `Oh My Limit Dev`를 만들어 두면
-`build-app.sh`가 자동으로 사용하며, 이후 다시 빌드해도 키체인 허용이 유지됩니다.
+`build-app.sh`는 `Oh My Limit Dev` 인증서가 있으면 그것으로, 없으면 임시(ad-hoc)로 서명합니다.
+임시 서명은 빌드할 때마다 다른 앱으로 인식되어 키체인 접근을 다시 묻습니다. 자체 서명 인증서를
+한 번 만들어 두면 다시 빌드해도 키체인 허용이 유지됩니다.
 
 ```sh
 T="$(mktemp -d)"; P="$(uuidgen)"
@@ -88,175 +197,26 @@ security import "$T/i.p12" -k ~/Library/Keychains/login.keychain-db -P "$P" -T /
 rm -rf "$T"
 ```
 
-개인 키는 로그인 키체인에만 남고 임시 파일은 지워집니다. 저장소에 넣지 마세요.
-Homebrew 등 OpenSSL 3의 PKCS#12 기본 형식은 `security import`가 거부하므로
-macOS 기본 `/usr/bin/openssl`을 사용합니다.
-처음 서명할 때 `codesign`의 키 사용 허용 창이 뜨면 Mac 암호를 입력하고
-**항상 허용**을 누릅니다. `security find-identity -p codesigning`에 표시되는
-`CSSMERR_TP_NOT_TRUSTED`는 자체 서명 인증서에서 정상이며 서명에는 문제가 없습니다.
-이전 ad-hoc 앱이 만든 키체인 항목은 새 서명으로 처음 실행할 때 항목마다 한 번씩
-**항상 허용**을 눌러야 합니다.
+- 개인 키는 로그인 키체인에만 남고 임시 파일은 지워집니다. 저장소에 넣지 마세요.
+- Homebrew 등의 OpenSSL 3가 만드는 PKCS#12는 `security import`가 거부하므로 `/usr/bin/openssl`을 씁니다.
+- 처음 서명할 때 `codesign`의 키 사용 허용 창이 뜨면 Mac 암호를 입력하고 **항상 허용**을 누릅니다.
+- `security find-identity -p codesigning`의 `CSSMERR_TP_NOT_TRUSTED`는 자체 서명 인증서에서 정상입니다.
+- 임시 서명 앱이 만든 키체인 항목은 새 서명으로 처음 실행할 때 항목마다 한 번 **항상 허용**을 눌러야 합니다.
 
-## 개인용 DMG 만들기
+### DMG와 릴리스
 
 ```sh
-./scripts/build-dmg.sh
+./scripts/build-dmg.sh   # dist/OhMyLimit-<버전>-macOS-arm64.dmg
+./scripts/release.sh     # GitHub 릴리스 v<버전> 생성 또는 갱신
 ```
 
-`dist/OhMyLimit-0.1.0-macOS-arm64.dmg`가 만들어집니다. DMG를 열고 앱 아이콘을
-`Applications` 바로가기로 드래그한 다음 응용 프로그램 폴더에서 실행하세요.
-다운받아 설치하는 Mac에는 Swift나 Xcode가 필요하지 않습니다. 이 빌드는 Apple Silicon
-Mac용이며, 현재 로컬 서명은 Apple 공증을 받지 않았으므로 다른 Mac에서 첫 실행이
-차단되면 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**로 앱을 허용해야 합니다.
-시스템 전체의 Gatekeeper를 끌 필요는 없습니다. 계정 인증 정보는 DMG에 들어가지 않습니다.
+`release.sh`는 `gh` 로그인 상태에서 `Resources/Info.plist`의 버전으로 릴리스를 만들고, 설치
+스크립트가 받는 `OhMyLimit-macOS-arm64.zip`과 DMG를 올립니다. 사용자의 키체인 허용이 업데이트
+후에도 유지되도록 릴리스는 항상 같은 인증서로 서명하세요.
 
-## 원형 사용률 패널
+### 확인용 도구
 
-상단의 서비스 아이콘을 감싼 링은 계정별 **사용한 비율**입니다.
-링 아래 계정 이름으로 Codex 구독 두 개를 구분할 수 있습니다.
-원하는 링을 누르면 아래에 그 계정의 시간창별 사용량과 초기화 시각이 표시됩니다.
-메뉴바에는 계정 번호 대신 **서비스 로고와 사용률**이 연결 순서대로 표시됩니다.
-같은 서비스의 계정 이름은 메뉴바에 마우스를 올리거나 패널을 열어 확인할 수 있습니다.
-메뉴바에는 최대 3개 계정이 표시되고, 나머지나 폭(240 pt)에 들어가지 않는 계정은 `+N`으로 묶입니다. 계정이 없으면 게이지 아이콘만 보입니다.
-
-- 주간 한도를 우선 표시하며, 링 아래에 사용한 시간창을 적습니다.
-- 민트색은 정상 범위, 주황색은 80% 이상, 빨간색은 95% 이상입니다.
-- `—`는 미확인·미제공·초기화 시각이 지난 값, `~`는 마지막 확인값입니다.
-- 계정이 많으면 링 영역을 좌우로 스크롤합니다. 긴 상세 정보는 고정된 카드 안에서만
-  스크롤되며, 스크롤바 유무와 관계없이 카드 폭·여백·둥근 모서리가 유지됩니다.
-- 새로고침은 상단, 다시 로그인·연결 해제는 선택한 계정의 **…** 메뉴에 있습니다.
-- 패널은 시스템 화면 모드(밝게/어둡게)를 따르며, macOS 26 이상에서는 Liquid Glass로 표시됩니다.
-
-## Codex 연결하기
-
-1. **설정 → 계정 추가 → Codex → ChatGPT 계정 연결**을 누릅니다.
-   메뉴바 패널의 **계정 연결…**을 눌러 설정을 열 수도 있습니다.
-2. 브라우저에서 연결할 ChatGPT 계정으로 로그인합니다. 브라우저가 다른 계정으로
-   자동 로그인되어 있다면 원하는 계정을 직접 선택해 주세요.
-3. 두 번째 계정도 같은 버튼으로 추가합니다. 계정마다 사용률과 초기화 시각을 별도로 표시합니다.
-
-Codex CLI나 `~/.codex` 폴더는 사용하지 않습니다. 앱은 사용량 조회에 필요한
-`openid profile email offline_access` 권한만 요청합니다.
-**연결 해제**는 해당 계정의 앱 내 인증정보와 캐시를 삭제하며 Codex CLI나 다른 앱의
-로그인은 변경하지 않습니다.
-
-## Antigravity 연결하기
-
-1. **설정 → 계정 추가 → Antigravity → Google 계정 연결**을 누릅니다.
-2. 브라우저에서 연결할 계정을 선택하고 인증을 완료합니다.
-3. 계정별 사용량을 확인합니다. 다른 계정도 같은 버튼으로 추가할 수 있습니다.
-   Antigravity 앱·CLI는 필요하지 않습니다.
-
-직접 연결은 계정별로 인증정보를 macOS 로그인 키체인에 보관하고 만료 시 갱신합니다.
-로그인 성공과 한도 조회 권한은 별개입니다. 인증 후 한도가 제공되지 않으면
-계정 이메일과 **로그인됨 · 사용량 미확인**을 표시합니다.
-**연결 해제**는 해당 계정의 앱 내 인증정보와 캐시도 삭제하며 Google 전체를
-로그아웃하거나 다른 앱의 인증을 변경하지 않습니다.
-
-이미 앱·CLI에서 로그인했다면 **로컬 앱·CLI로 연결 → 현재 로컬 계정 연결**도 사용할 수 있습니다.
-이 연결만 로컬 로그인 하나를 따라갑니다. Antigravity에서 계정을 바꾸면
-다음 조회부터 표시 계정도 바뀝니다. CLI JSON에 이메일이 없으면 이전 이메일을
-이어 붙이지 않고 **이메일 미제공**으로 표시합니다.
-
-직접 연결은 인증한 계정의 Google 원격 한도 API만 조회하며 로컬 계정으로
-대체하지 않습니다. 로컬 연결은 실행 중인 Antigravity 앱, `agy`, IDE를 우선 확인합니다.
-로컬 조회가 불가능하면 같은 실행 파일의 버전을 확인한 뒤 다음 명령을 실행합니다.
-
-```sh
-agy -p "/usage" --output-format json --print-timeout 90s
-```
-
-모델 요청이나 터미널 화면 파싱은 하지 않습니다. CLI 조회에는 빈 작업 폴더,
-비대화형 표준 입력, 출력 크기 제한과 시간 제한을 적용하며 취소 시 프로세스를
-종료하고 회수합니다.
-
-## Claude 연결하기
-
-1. **설정 → 계정 추가 → Claude → Claude 계정 연결**을 누릅니다.
-2. 브라우저에서 Claude 계정으로 로그인하고 사용량 읽기 권한(`user:profile`)을 허용합니다.
-3. 다른 계정도 같은 버튼으로 추가할 수 있습니다.
-
-5시간·주간·모델별 주간 한도가 제공되면 표시하며 메뉴바 요약에는 전체 주간 한도를
-우선 사용합니다. Claude Code는 필요하지 않으며 Claude Code의 키체인 항목이나
-`~/.claude` 파일을 읽지 않습니다. 앱은 자체 갱신 토큰으로 로그인을 유지합니다.
-**연결 해제**는 해당 계정의 앱 내 인증정보만 삭제하며 Claude Code를 로그아웃하지 않습니다.
-Claude API 키·Bedrock·Vertex 연결은 이 Claude 구독 사용량 연결에 포함되지 않습니다.
-
-## 표시와 갱신
-
-- 숫자는 **사용한 비율**입니다.
-- 메뉴바와 원형 요약은 주간 한도를 우선 표시합니다. Codex는 본 모델의
-  `codex` 한도만 사용하며 reserve·추가 모델의 수치로 대체하지 않습니다.
-  본 모델 주간 한도가 100%면 reserve 잔여량과 관계없이 100%입니다.
-  Antigravity는 알려진 주간 창 중 가장 많이 사용한 값을 선택합니다. 해당
-  주간 값이 없으면 같은 대상의 알려진 다른 창을 사용합니다.
-- Claude는 전체 주간 한도를 우선, 제공되지 않으면 5시간 한도를 표시합니다.
-  모델별 주간 한도로 전체 주간 값을 대체하지 않습니다.
-- `~`는 오래됐거나 조회가 실패한 마지막 값입니다.
-- 서버가 제공한 시간창만 표시합니다. Antigravity의 그룹형 응답은 네 가지
-  표준 창으로 표시하며, 미제공 값은 **알 수 없음**입니다. 모델별 응답의
-  시간창 길이가 없으면 5시간·주간으로 추정하지 않습니다.
-- 모델별 추가 한도도 별도 행으로 표시합니다.
-- 초기화 시각이 지나도 잔여량이 복원됐다고 가정하지 않습니다.
-- 정상 상태에서는 Codex는 60초, Claude와 Antigravity는 5분마다 확인합니다.
-  메뉴를 열거나 잠자기에서 돌아오면 해당 주기에 따라 오래된 값을 갱신합니다.
-- 실패 시 마지막 성공값을 유지하고, 자동 재시도 간격을 최대 15분까지 늘립니다.
-- 같은 계정의 중복 조회를 합칩니다. 다른 계정의 로그인/오류가 그 계정의
-  데이터를 덮어쓰지 않습니다.
-
-## 인증과 데이터
-
-Codex는 PKCE 브라우저 로그인(`auth.openai.com`) 후 ChatGPT 사용량 API만 조회합니다.
-Claude는 PKCE 브라우저 로그인 후 Anthropic 사용량 API만 조회합니다.
-추론 요청이나 에이전트 작업을 실행하지 않습니다.
-Antigravity 직접 연결은 PKCE와 무작위 state를 검증하는 루프백 OAuth 콜백을
-사용합니다. 계정 정보는 `cloudcode-pa.googleapis.com`, 한도는
-`daily-cloudcode-pa.googleapis.com`에서 조회합니다. OpenCodex 2.55.0과 같은
-Antigravity IDE 클라이언트 계약을 사용하며 리다이렉트와 공유 쿠키는 쓰지 않습니다.
-공개 네이티브 OAuth 클라이언트
-설정의 출처는 `AntigravityOAuthTypes.swift`에 기록되어 있습니다.
-로컬 연결은 Connect-RPC 또는 공식 CLI JSON 출력을 사용합니다.
-로컬 통신의 자체 서명 인증서는 루프백 주소에서만 허용하고 리다이렉트는 거부합니다.
-웹 쿠키를 수집하거나 추론·프로젝트 생성 요청을 보내지 않습니다.
-세 서비스 모두 공식 CLI·앱과 같은 각 서비스의 공개 OAuth 클라이언트로 로그인하므로,
-서비스 측에서 언제든 이 접근 방식을 변경하거나 차단할 수 있습니다.
-
-앱 설정과 마지막 사용량은 다음 위치에 저장됩니다.
-
-```text
-~/Library/Application Support/OhMyLimit/
-  accounts.json
-  snapshots/<account UUID>.json  # 계정별 마지막 사용량
-```
-
-직접 연결의 OAuth 액세스/갱신 토큰은 앱 전용 키체인 서비스
-(`local.ohmylimit.antigravity.oauth`, `local.ohmylimit.codex.oauth`, `local.ohmylimit.claude.oauth`)에
-계정별로 저장합니다. 토큰은 설정·캐시 파일이나 로그에 기록하지 않습니다.
-Antigravity 로컬 통신에 필요한 프로세스 CSRF 값만 메모리에서 사용합니다.
-설정과 캐시는 사용자 전용 권한으로 저장하며 캐시에 계정 이메일이 포함될 수 있습니다.
-예전 버전에서 Codex CLI 또는 Claude Code로 연결한 계정은 앱을 열 때 목록에서 제거하고
-안내를 표시합니다. 이때 CLI의 로그인 파일은 삭제하거나 변경하지 않으며, 브라우저 로그인으로
-다시 연결하면 됩니다. 저장할 때는 인증 방식이 포함된 버전 3을 사용합니다. 캐시는 계정 UUID·경로·제공자·인증 방식이 일치할 때만
-복원하며, 직접 연결은 인증한 Google 계정 ID도 대조합니다.
-
-## 제거하기
-
-1. 앱 설정에서 **로그인 시 실행**을 끄거나 **시스템 설정 → 일반 → 로그인 항목 및 확장 프로그램**에서 Oh My Limit을 제거합니다.
-2. 메뉴바의 Oh My Limit을 종료합니다.
-3. `/Applications/OhMyLimit.app`을 삭제합니다.
-4. 계정 목록과 마지막 사용량 기록까지 지우려면 `~/Library/Application Support/OhMyLimit/` 폴더를 삭제합니다. (선택)
-5. 로그인 토큰까지 지우려면 키체인 접근 앱에서 서비스 이름이 `local.ohmylimit.codex.oauth`, `local.ohmylimit.claude.oauth`, `local.ohmylimit.antigravity.oauth`인 항목을 삭제합니다. (선택)
-6. 앱 환경설정을 초기화하려면 `defaults delete local.ohmylimit.app`을 실행합니다. (선택)
-
-## 개발과 검증
-
-```sh
-./scripts/test.sh
-xcrun swift build
-```
-
-로컬 Antigravity 계정으로 실제 조회를 확인할 수 있습니다. 출력에는
-이메일이나 토큰이 포함되지 않습니다.
+로컬 Antigravity 계정의 실제 조회 결과를 출력합니다. 이메일이나 토큰은 출력하지 않습니다.
 
 ```sh
 BIN="$(xcrun swift build --show-bin-path)"
@@ -264,40 +224,26 @@ BIN="$(xcrun swift build --show-bin-path)"
 "$BIN/OhMyLimit" --probe-antigravity --antigravity-cli "/path/to/agy"
 ```
 
-테스트는 계정 분리, 저장/복원, 예전 연결 방식 계정 정리, 중복 요청, 오래된 응답 폐기,
-실패 시 마지막 값 유지를 확인합니다.
-테스트는 실제 계정이나 인증 토큰을 사용하지 않습니다.
-Antigravity 테스트는 실제 루프백 HTTP 서버와 가짜 CLI 실행 파일로 파싱,
-계정 식별, 로컬 우선순위, CLI 버전 검사, 출력 제한, 취소와 정리를 검증합니다.
-직접 OAuth 테스트는 콜백, 토큰 교환·갱신, 계정별 저장·해제, 원격 한도 거절,
-리다이렉트 차단과 취소 중 늦은 응답을 검증합니다.
-
-화면을 재현하려면:
+사용량·오류·로그인 상태와 설정 화면을 밝게/어둡게 모드로 렌더링해 `dist/previews/`에 저장합니다.
+미리보기 계정은 임시 폴더에만 만들고 실제 계정 목록에는 저장하지 않습니다.
 
 ```sh
 bash scripts/capture-previews.sh
 ```
 
-사용량·오류·로그인 상태, 상세 화면의 스크롤 끝과 설정의 빈 계정/연결된 계정 상태를
-라이트/다크 시스템 환경에서 렌더링해 `dist/previews/`에 저장합니다.
-설정 미리보기 계정은 임시 폴더에만 만들며 실제 계정 목록에 저장되지 않습니다.
-기본 실행은 항상 실제 계정 데이터를 사용합니다.
-
 ### 개발 참고
 
-- Swift 6.4 Command Line Tools에는 SwiftUI의 새 `@State` 매크로 플러그인이
-  없어서, 설정 입력은 `ObservableObject`/`StateObject`로 관리합니다.
-- 기본 빌더는 증분 빌드 상태에 따라 `TestingMacros` 플러그인을 빠뜨릴 수
-  있습니다. `scripts/test.sh`는 선택된 Swift 도구 체인에 플러그인이 있으면
-  그 경로를 명시해 테스트를 실행합니다.
-- 테스트 통과는 실제 계정의 권한이나 구독 한도 제공 여부를 보장하지 않습니다.
-  실제 로그인과 조회는 각자 계정으로 확인해야 합니다.
+- Swift 6.4 Command Line Tools에는 SwiftUI의 새 `@State` 매크로 플러그인이 없어서,
+  설정 입력은 `ObservableObject`/`StateObject`로 관리합니다.
+- 기본 빌더는 증분 빌드 상태에 따라 `TestingMacros` 플러그인을 빠뜨릴 수 있습니다.
+  `scripts/test.sh`는 도구 체인에 플러그인이 있으면 그 경로를 명시해 테스트를 실행합니다.
 
-## 구성
+### 구성
 
 - `Sources/OhMyLimitCore`: OAuth 로그인, 사용량 조회, 계정 저장, 조회 상태와 캐시
 - `Sources/OhMyLimit`: 메뉴바, 팝오버, 설정, 화면 미리보기
-- `Tests/OhMyLimitCoreTests`: 프로토콜과 계정/상태 회귀 테스트
+- `Tests/OhMyLimitCoreTests`: 프로토콜과 계정·상태 회귀 테스트
+- `scripts/`: 테스트, 빌드, DMG, 릴리스, 설치 스크립트
 - `DESIGN.md`: 화면과 접근성 기준
 
 ## 라이선스
