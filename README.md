@@ -32,7 +32,11 @@ DMG로 설치하려면 [Releases](https://github.com/useonmn/oh-my-limit/release
 앱 설정의 **로그인 시 실행** 또는 **시스템 설정 → 일반 → 로그인 항목 및 확장 프로그램**에서
 끌 수 있습니다.
 
-로그인 정보를 처음 읽거나 저장할 때 macOS가 키체인 접근을 물으면 **항상 허용**을 누릅니다.
+로그인 정보를 읽거나 저장할 때 macOS가 키체인 접근을 물으면 Mac 암호를 입력하고 **항상 허용**을 누릅니다.
+이 앱은 Apple 개발자 인증서(Developer ID)로 서명하지 않아서, macOS가 키체인 허용을 앱의 정확한
+빌드 하나에 묶습니다. 그래서 **업데이트할 때마다 계정별로 한 번씩** 다시 물을 수 있습니다.
+백그라운드 조회는 창을 띄우지 않으므로, 업데이트 뒤 계정에 **키체인 접근 허용** 버튼이 보이면
+눌러서 허용하세요. 같은 버전을 계속 쓰는 동안에는 다시 묻지 않습니다.
 
 ## 계정 연결
 
@@ -169,39 +173,13 @@ CLI 버전 검사, 출력 제한, 취소와 정리를 검증합니다. OAuth 테
 계정별 저장·해제, 한도 거절, 리다이렉트 차단, 취소 중 늦은 응답을 검증합니다.
 테스트 통과가 실제 계정의 권한이나 한도 제공을 보장하지는 않으니 실제 조회는 각자 계정으로 확인하세요.
 
-### 서명 인증서 (소스에서 빌드할 때만)
+### 서명과 키체인
 
-`build-app.sh`는 `Oh My Limit Dev` 인증서가 있으면 그것으로, 없으면 임시(ad-hoc)로 서명합니다.
-임시 서명은 빌드할 때마다 다른 앱으로 인식되어 키체인 접근을 다시 묻습니다. 자체 서명 인증서를
-한 번 만들어 두면 다시 빌드해도 키체인 허용이 유지됩니다.
-
-```sh
-T="$(mktemp -d)"; P="$(uuidgen)"
-cat > "$T/c.cnf" <<'EOF'
-[req]
-distinguished_name=dn
-prompt=no
-x509_extensions=ext
-[dn]
-CN=Oh My Limit Dev
-[ext]
-basicConstraints=critical,CA:false
-keyUsage=critical,digitalSignature
-extendedKeyUsage=critical,codeSigning
-EOF
-/usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -days 7300 -config "$T/c.cnf" \
-  -keyout "$T/k.pem" -out "$T/c.pem"
-/usr/bin/openssl pkcs12 -export -inkey "$T/k.pem" -in "$T/c.pem" -name "Oh My Limit Dev" \
-  -out "$T/i.p12" -passout "pass:$P"
-security import "$T/i.p12" -k ~/Library/Keychains/login.keychain-db -P "$P" -T /usr/bin/codesign
-rm -rf "$T"
-```
-
-- 개인 키는 로그인 키체인에만 남고 임시 파일은 지워집니다. 저장소에 넣지 마세요.
-- Homebrew 등의 OpenSSL 3가 만드는 PKCS#12는 `security import`가 거부하므로 `/usr/bin/openssl`을 씁니다.
-- 처음 서명할 때 `codesign`의 키 사용 허용 창이 뜨면 Mac 암호를 입력하고 **항상 허용**을 누릅니다.
-- `security find-identity -p codesigning`의 `CSSMERR_TP_NOT_TRUSTED`는 자체 서명 인증서에서 정상입니다.
-- 임시 서명 앱이 만든 키체인 항목은 새 서명으로 처음 실행할 때 항목마다 한 번 **항상 허용**을 눌러야 합니다.
+`build-app.sh`는 `Oh My Limit Dev`라는 코드 서명 인증서가 키체인에 있으면 그것으로, 없으면
+임시(ad-hoc)로 서명합니다. 어느 쪽이든 Apple Team ID가 없으므로 macOS 로그인 키체인은 각 항목을
+빌드의 코드 해시(`cdhash`)에 묶습니다. 그래서 새로 빌드한 앱은 기존 항목을 읽을 때 항목마다 한 번
+허용을 묻습니다. Team ID 없이는 최신 데이터 보호 키체인도 쓸 수 없습니다(`errSecMissingEntitlement`).
+업데이트 뒤에도 묻지 않게 하려면 Apple Developer Program의 Developer ID로 서명해야 합니다.
 
 ### DMG와 릴리스
 
@@ -211,8 +189,7 @@ rm -rf "$T"
 ```
 
 `release.sh`는 `gh` 로그인 상태에서 `Resources/Info.plist`의 버전으로 릴리스를 만들고, 설치
-스크립트가 받는 `OhMyLimit-macOS-arm64.zip`과 DMG를 올립니다. 사용자의 키체인 허용이 업데이트
-후에도 유지되도록 릴리스는 항상 같은 인증서로 서명하세요.
+스크립트가 받는 `OhMyLimit-macOS-arm64.zip`과 DMG를 올립니다.
 
 ### 확인용 도구
 

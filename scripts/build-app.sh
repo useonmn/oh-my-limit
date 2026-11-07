@@ -14,8 +14,9 @@ ICONSET="$ROOT/.build/AppIcon.iconset"
 mkdir -p "$ICONSET"
 xcrun swift "$ROOT/scripts/generate-icon.swift" "$ICONSET"
 xcrun iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
-# A stable self-signed identity keeps Keychain/TCC grants across rebuilds;
-# ad-hoc signing makes macOS re-prompt on every access.
+# Signs with the "Oh My Limit Dev" identity when present, else ad-hoc. Without an Apple
+# Team ID the login keychain binds each item to the build's cdhash, so either way a new
+# build asks once per item; only Developer ID signing (teamid partition) avoids that.
 # Without -v so an untrusted self-signed identity still counts; find-identity
 # only lists certificates whose private key is present. Sign by SHA-1 hash so
 # duplicate certificates with the same name do not make codesign ambiguous.
